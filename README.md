@@ -51,7 +51,7 @@ python app.py
 
 ## 后台运行和系统托盘
 
-- 点击主窗口右上角关闭按钮不会退出程序，只会隐藏主窗口。
+- 可在 `设置` 页选择点击主窗口右上角关闭按钮时直接退出，或隐藏到系统托盘。
 - 最小化主窗口会自动收起到系统托盘，桌宠继续在后台播放。
 - 托盘菜单提供：
   - `显示主窗口`
@@ -60,12 +60,14 @@ python app.py
   - `退出`
 - 只有点击托盘菜单里的 `退出` 才会真正关闭程序。
 
+`设置` 页还提供 Windows 开机自启开关，以及生成用的 API Key、API URL、模型设置。
+
 ## 直接生成桌宠
 
 1. 打开 `生成` 页。
 2. 用一句话描述你想要的桌宠，例如：`生成一个开心的小猫桌宠，会待机、挥手、跳起来`。
-3. 填写 `API Key`，也可以提前设置环境变量 `OPENAI_API_KEY`。
-4. 如需自定义 API 地址，填写 `API URL`，例如 `https://api.openai.com/v1`。
+3. 在 `设置` 页填写 `API Key`，也可以提前设置环境变量 `OPENAI_API_KEY`。
+4. 如需自定义 API 地址，在 `设置` 页填写 `API URL`，例如 `https://api.openai.com/v1`。
 5. 点击 `开始生成`。
 6. 程序会自动解析动作，生成日志会实时显示当前步骤。
 7. 生成完成后，程序会自动加载 `final/spritesheet.png`。
@@ -103,7 +105,28 @@ desktop-pet-app/
 
 ## 可选打包 EXE
 
-仓库不依赖固定的本地打包脚本。需要发布 Windows 单文件程序时，可以在自己的 Python 环境里安装 PyInstaller 后打包：
+仓库包含 GitHub Actions 自动打包配置：`.github/workflows/build.yml`。推送到 `main`/`master`、提交 PR，或在 GitHub 页面手动运行 workflow 后，会生成这些 artifact：
+
+```text
+DesktopPet-windows-x64
+DesktopPet-windows-x86
+DesktopPet-windows-arm64
+DesktopPet-macos-apple-silicon
+DesktopPet-macos-intel
+```
+
+macOS 包未签名，首次打开可能需要在系统安全设置里允许运行。Windows ARM64 使用 GitHub 的 `windows-11-arm` runner；如果你的仓库或账号暂时不可用这个 runner，可以先关闭矩阵里的 `windows-arm64` 项。
+
+发布 Release 时推送一个 `v*` 标签即可，例如：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Actions 会先构建五个平台的 zip 包，然后自动创建或更新对应 tag 的 GitHub Release，并把 zip 上传到 Release assets。每个 zip 内包含程序本体、`config/`、`output/` 和默认宠物 `pets/default/`。
+
+仓库不依赖固定的本地打包脚本。需要在本机发布 Windows 单文件程序时，也可以在自己的 Python 环境里安装 PyInstaller 后打包：
 
 ```powershell
 python -m pip install -r requirements.txt

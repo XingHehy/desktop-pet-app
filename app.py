@@ -27,6 +27,8 @@ except ModuleNotFoundError as exc:
     raise
 
 from PIL import Image, ImageTk
+import numpy as np  # Ensures PyInstaller bundles generator dependency.
+import openai  # Ensures PyInstaller bundles generator dependency.
 import pystray
 from pystray import MenuItem as TrayMenuItem
 
@@ -35,6 +37,7 @@ TRANSPARENT_COLOR = "#ff00ff"
 MIN_DISPLAY_SCALE = 0.1
 MAX_DISPLAY_SCALE = 3.0
 NEW_GENERATION_LABEL = "新任务"
+STARTUP_REG_NAME = "DesktopPet"
 
 
 def get_app_dir() -> Path:
@@ -346,6 +349,8 @@ class DesktopPetApp:
         self.gen_api_key = tk.StringVar(value=self.app_config.get("api_key", os.getenv("OPENAI_API_KEY", "")))
         self.gen_base_url = tk.StringVar(value=self.app_config.get("base_url", os.getenv("OPENAI_BASE_URL", "")))
         self.gen_model = tk.StringVar(value=self.app_config.get("model", "gpt-image-2"))
+        self.startup_enabled = tk.BooleanVar(value=self.is_startup_enabled())
+        self.close_to_tray = tk.BooleanVar(value=bool(self.app_config.get("close_to_tray", True)))
         self.gen_quality = tk.StringVar(value="medium")
         self.gen_references = [Path(path) for path in self.app_config.get("reference_images", []) if str(path).strip()]
         self.gen_reference_label = tk.StringVar(value="")
@@ -386,7 +391,7 @@ class DesktopPetApp:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     def setup_window_behavior(self) -> None:
-        self.root.protocol("WM_DELETE_WINDOW", self.hide_main_window)
+        self.root.protocol("WM_DELETE_WINDOW", self.handle_close_window)
         self.root.bind("<Unmap>", self._handle_minimize)
 
     def _handle_minimize(self, _event: tk.Event) -> None:
@@ -397,6 +402,13 @@ class DesktopPetApp:
 
     def hide_main_window(self) -> None:
         self.root.withdraw()
+
+    def handle_close_window(self) -> None:
+        if self.close_to_tray.get():
+            self.save_app_config()
+            self.hide_main_window()
+        else:
+            self.quit_app()
 
     def show_main_window(self) -> None:
         self.root.after(0, self._show_main_window_on_ui_thread)
@@ -446,18 +458,23 @@ class DesktopPetApp:
         self.root.destroy()
 
     def _build_ui(self) -> None:
+        style = ttk.Style(self.root)
+        style.configure("TNotebook.Tab", padding=(24, 8))
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True)
 
         player_tab = ttk.Frame(notebook)
         generator_tab = ttk.Frame(notebook)
+        settings_tab = ttk.Frame(notebook)
         notebook.add(player_tab, text="播放")
         notebook.add(generator_tab, text="生成")
+        notebook.add(settings_tab, text="设置")
 
         player_scroll = ScrollableFrame(player_tab)
         player_scroll.pack(fill="both", expand=True)
         self._build_player_tab(player_scroll.body)
         self._build_generator_tab(generator_tab)
+        self._build_settings_tab(settings_tab)
 
         self.status = tk.StringVar(value="请先导入一张 spritesheet 精灵图，或在“生成”页创建一个。")
         ttk.Label(self.root, textvariable=self.status, anchor="w", padding=8).pack(fill="x")
@@ -600,25 +617,15 @@ class DesktopPetApp:
         self.gen_reference_preview_frame.pack(fill="x", pady=(8, 0))
         self.update_reference_label()
 
-        fields = [
-            ("API Key", self.gen_api_key),
-            ("API URL", self.gen_base_url),
-            ("模型", self.gen_model),
-        ]
-        for row, (label, var) in enumerate(fields, start=1):
-            ttk.Label(left_panel, text=label).grid(row=row, column=0, sticky="w", pady=4)
-            entry = ttk.Entry(left_panel, textvariable=var, width=72, show="*" if label == "API Key" else "")
-            entry.grid(row=row, column=1, sticky="ew", pady=4)
-
         buttons = ttk.Frame(left_panel)
-        buttons.grid(row=len(fields) + 1, column=0, columnspan=2, sticky="w", pady=(14, 6))
+        buttons.grid(row=1, column=0, columnspan=2, sticky="w", pady=(14, 6))
         ttk.Button(buttons, text="开始生成", command=self.start_generation).pack(side="left")
         ttk.Button(buttons, text="加载最近输出结果", command=self.load_generated_result).pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="刷新历史", command=self.refresh_generation_history).pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="清空日志", command=self.clear_generation_log).pack(side="left", padx=(8, 0))
 
         history_frame = ttk.Frame(left_panel)
-        history_frame.grid(row=len(fields) + 2, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        history_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 6))
         history_frame.columnconfigure(1, weight=1)
         ttk.Label(history_frame, text="历史任务").grid(row=0, column=0, sticky="w", padx=(0, 6))
         self.gen_history_combo = ttk.Combobox(history_frame, textvariable=self.gen_history_var, state="readonly")
@@ -628,13 +635,51 @@ class DesktopPetApp:
             "例：生成一个开心的小猫桌宠，会待机、挥手、跳起来。"
             "历史任务选择“新任务”会重新生成；选择已有任务再开始会从中断处继续。"
         )
-        ttk.Label(left_panel, text=help_text, foreground="#555").grid(row=len(fields) + 3, column=0, columnspan=2, sticky="w")
+        ttk.Label(left_panel, text=help_text, foreground="#555").grid(row=3, column=0, columnspan=2, sticky="w")
 
         log_frame = ttk.LabelFrame(left_panel, text="生成日志", padding=6)
-        log_frame.grid(row=len(fields) + 4, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
-        left_panel.rowconfigure(len(fields) + 4, weight=1)
+        log_frame.grid(row=4, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
+        left_panel.rowconfigure(4, weight=1)
         self.gen_log = scrolledtext.ScrolledText(log_frame, height=12, wrap="word")
         self.gen_log.pack(fill="both", expand=True)
+
+    def _build_settings_tab(self, parent: ttk.Frame) -> None:
+        panel = ttk.Frame(parent, padding=12)
+        panel.pack(fill="both", expand=True)
+        panel.columnconfigure(0, weight=1)
+
+        basic = ttk.LabelFrame(panel, text="基础设置", padding=10)
+        basic.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        basic.columnconfigure(1, weight=1)
+        ttk.Checkbutton(
+            basic,
+            text="开机自启",
+            variable=self.startup_enabled,
+            command=self.apply_startup_setting,
+        ).grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Checkbutton(
+            basic,
+            text="点击 X 隐藏到系统托盘",
+            variable=self.close_to_tray,
+            command=self.save_app_config,
+        ).grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(basic, text="关闭此选项后，点击窗口 X 会直接退出程序。", foreground="#666").grid(row=2, column=0, sticky="w", pady=(2, 0))
+
+        generation = ttk.LabelFrame(panel, text="生成设置", padding=10)
+        generation.grid(row=1, column=0, sticky="ew")
+        generation.columnconfigure(1, weight=1)
+        fields = [
+            ("API Key", self.gen_api_key, True),
+            ("API URL", self.gen_base_url, False),
+            ("模型", self.gen_model, False),
+        ]
+        for row, (label, var, secret) in enumerate(fields):
+            ttk.Label(generation, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=5)
+            entry = ttk.Entry(generation, textvariable=var, show="*" if secret else "")
+            entry.grid(row=row, column=1, sticky="ew", pady=5)
+            entry.bind("<FocusOut>", lambda _event: self.save_app_config())
+            entry.bind("<Return>", lambda _event: self.save_app_config())
+        ttk.Button(generation, text="保存设置", command=self.save_app_config).grid(row=len(fields), column=1, sticky="e", pady=(8, 0))
 
     def start_generation(self) -> None:
         if self.gen_running:
@@ -747,6 +792,56 @@ class DesktopPetApp:
         self.gen_references = []
         self.update_reference_label()
         self.save_app_config()
+
+    def startup_command(self) -> str:
+        if getattr(sys, "frozen", False):
+            return f'"{sys.executable}"'
+        return f'"{sys.executable}" "{Path(__file__).resolve()}"'
+
+    def open_startup_key(self, access: int):
+        if sys.platform != "win32":
+            return None
+        import winreg
+
+        return winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            0,
+            access,
+        )
+
+    def is_startup_enabled(self) -> bool:
+        if sys.platform != "win32":
+            return False
+        try:
+            import winreg
+
+            with self.open_startup_key(winreg.KEY_READ) as key:
+                value, _kind = winreg.QueryValueEx(key, STARTUP_REG_NAME)
+            return str(value).strip() == self.startup_command()
+        except Exception:
+            return False
+
+    def apply_startup_setting(self) -> None:
+        if sys.platform != "win32":
+            self.startup_enabled.set(False)
+            messagebox.showinfo("不可用", "开机自启设置当前只支持 Windows。")
+            return
+        try:
+            import winreg
+
+            with self.open_startup_key(winreg.KEY_SET_VALUE) as key:
+                if self.startup_enabled.get():
+                    winreg.SetValueEx(key, STARTUP_REG_NAME, 0, winreg.REG_SZ, self.startup_command())
+                else:
+                    try:
+                        winreg.DeleteValue(key, STARTUP_REG_NAME)
+                    except FileNotFoundError:
+                        pass
+            self.save_app_config()
+        except Exception as exc:
+            self.startup_enabled.set(self.is_startup_enabled())
+            messagebox.showerror("设置失败", str(exc))
 
     def update_reference_label(self) -> None:
         if not self.gen_references:
@@ -1633,6 +1728,7 @@ class DesktopPetApp:
             "api_key": self.gen_api_key.get(),
             "base_url": self.gen_base_url.get(),
             "model": self.gen_model.get(),
+            "close_to_tray": self.close_to_tray.get(),
             "reference_images": [str(path) for path in self.gen_references],
         })
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
