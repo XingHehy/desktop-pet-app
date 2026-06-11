@@ -105,27 +105,6 @@ desktop-pet-app/
 
 ## 可选打包 EXE
 
-仓库包含 GitHub Actions 自动打包配置：`.github/workflows/build.yml`。推送到 `main`/`master`、提交 PR，或在 GitHub 页面手动运行 workflow 后，会生成这些 artifact：
-
-```text
-DesktopPet-windows-x64
-DesktopPet-windows-x86
-DesktopPet-windows-arm64
-DesktopPet-macos-apple-silicon
-DesktopPet-macos-intel
-```
-
-macOS 包未签名，首次打开可能需要在系统安全设置里允许运行。Windows ARM64 使用 GitHub 的 `windows-11-arm` runner；如果你的仓库或账号暂时不可用这个 runner，可以先关闭矩阵里的 `windows-arm64` 项。
-
-发布 Release 时推送一个 `v*` 标签即可，例如：
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-Actions 会先构建五个平台的 zip 包，然后自动创建或更新对应 tag 的 GitHub Release，并把 zip 上传到 Release assets。每个 zip 内包含程序本体、`config/`、`output/` 和默认宠物 `pets/default/`。
-
 仓库不依赖固定的本地打包脚本。需要在本机发布 Windows 单文件程序时，也可以在自己的 Python 环境里安装 PyInstaller 后打包：
 
 ```powershell
