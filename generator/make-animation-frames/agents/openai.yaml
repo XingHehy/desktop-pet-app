@@ -1,0 +1,4 @@
+interface:
+  display_name: "Make Animation Frames"
+  short_description: "Generate action frames, preview GIFs, and merged spritesheets."
+  default_prompt: "Use $make-animation-frames to create animated character action frames with preview GIFs and a merged spritesheet."
