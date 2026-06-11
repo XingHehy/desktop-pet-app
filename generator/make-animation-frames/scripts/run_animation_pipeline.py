@@ -19,6 +19,7 @@ import binascii
 import json
 import os
 import re
+import runpy
 import subprocess
 import sys
 import urllib.request
@@ -35,6 +36,23 @@ def script_dir() -> Path:
 
 
 def run_step(args: list[str]) -> None:
+    if getattr(sys, "frozen", False) and len(args) >= 2 and Path(args[0]).resolve() == Path(sys.executable).resolve():
+        script = Path(args[1])
+        if script.suffix.lower() == ".py" and script.exists():
+            print("+ in-process", " ".join(str(a) for a in [script, *args[2:]]), flush=True)
+            old_argv = sys.argv[:]
+            try:
+                sys.argv = [str(script), *args[2:]]
+                runpy.run_path(str(script), run_name="__main__")
+            except SystemExit as exc:
+                code = exc.code
+                if code not in (None, 0):
+                    if not isinstance(code, int):
+                        print(code, file=sys.stderr, flush=True)
+                    raise subprocess.CalledProcessError(int(code) if isinstance(code, int) else 1, args) from exc
+            finally:
+                sys.argv = old_argv
+            return
     print("+", " ".join(str(a) for a in args), flush=True)
     subprocess.run(args, check=True)
 

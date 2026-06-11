@@ -113,14 +113,6 @@ BUILT_IN_ACTIONS = {
             "Keep the character self-contained. Do not draw hands, strings, hooks, cursor icons, shadows, floor cues, or detached effects."
         ),
     },
-    "base": {
-        "display_name": "基础静帧",
-        "frames": 1,
-        "prompt": "single neutral canonical standing pose, static base frame",
-        "guidance": (
-            "Create exactly one clean neutral frame matching the base identity. No motion, no gesture, no new props, no effects."
-        ),
-    },
     "play": {
         "display_name": "玩耍",
         "frames": 6,
@@ -277,6 +269,7 @@ def main() -> int:
         raise SystemExit(f"Output directory exists and is not empty: {run_dir}")
 
     actions = [parse_action(spec) for spec in args.action]
+    actions = [action for action in actions if action["id"] != "base"]
     if not actions:
         actions = [parse_action("idle")]
 

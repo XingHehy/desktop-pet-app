@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import traceback
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,7 @@ from pystray import MenuItem as TrayMenuItem
 TRANSPARENT_COLOR = "#ff00ff"
 MIN_DISPLAY_SCALE = 0.1
 MAX_DISPLAY_SCALE = 3.0
+NEW_GENERATION_LABEL = "新任务"
 
 
 def get_app_dir() -> Path:
@@ -59,18 +61,17 @@ INTERACTION_SPECS = [
     ("drag_left", "左拖", "move-left"),
     ("drag_right", "右拖", "move-right"),
     ("drag_up", "拎起", "lift"),
-    ("click", "点击", "base"),
+    ("click", "点击", "idle"),
     ("play", "玩耍", "play"),
 ]
 DEFAULT_INTERACTION_BINDINGS = {key: action for key, _label, action in INTERACTION_SPECS}
-BASIC_GENERATION_ACTIONS = ["idle", "wave", "move-left", "move-right", "lift", "base", "play"]
+BASIC_GENERATION_ACTIONS = ["idle", "wave", "move-left", "move-right", "lift", "play"]
 ACTION_DISPLAY_NAMES = {
     "idle": "待机",
     "wave": "挥手",
     "move-left": "向左移动",
     "move-right": "向右移动",
     "lift": "拎起",
-    "base": "基础静帧",
     "play": "玩耍",
     "jump": "跳跃",
     "cheer": "开心",
@@ -592,7 +593,6 @@ class DesktopPetApp:
         buttons = ttk.Frame(left_panel)
         buttons.grid(row=len(fields) + 1, column=0, columnspan=2, sticky="w", pady=(14, 6))
         ttk.Button(buttons, text="开始生成", command=self.start_generation).pack(side="left")
-        ttk.Button(buttons, text="继续历史任务", command=self.resume_generation).pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="加载最近输出结果", command=self.load_generated_result).pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="刷新历史", command=self.refresh_generation_history).pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="清空日志", command=self.clear_generation_log).pack(side="left", padx=(8, 0))
@@ -606,7 +606,7 @@ class DesktopPetApp:
 
         help_text = (
             "例：生成一个开心的小猫桌宠，会待机、挥手、跳起来。"
-            "程序会自动解析动作，输出到 output，并整理可用桌宠到 pets。异常中断后可从历史任务继续。"
+            "历史任务选择“新任务”会重新生成；选择已有任务再开始会从中断处继续。"
         )
         ttk.Label(left_panel, text=help_text, foreground="#555").grid(row=len(fields) + 3, column=0, columnspan=2, sticky="w")
 
@@ -620,34 +620,22 @@ class DesktopPetApp:
         if self.gen_running:
             messagebox.showinfo("正在生成", "当前已有生成任务在运行。")
             return
-        if not self.get_generation_prompt().strip():
+        run_dir = self.selected_history_run_dir()
+        if run_dir is None and not self.get_generation_prompt().strip():
             messagebox.showinfo("缺少描述", "请先用一句话描述你想要的桌宠。")
             return
-        self.save_app_config()
-        self.gen_running = True
-        self.status.set("正在生成动画，请稍等...")
-        self.clear_generation_log()
-        self.append_generation_log("开始生成动画...\n")
-        thread = threading.Thread(target=self._generation_worker, kwargs={"resume_run_dir": None}, daemon=True)
-        thread.start()
-
-    def resume_generation(self) -> None:
-        if self.gen_running:
-            messagebox.showinfo("正在生成", "当前已有生成任务在运行。")
-            return
-        run_dir = self.selected_history_run_dir()
-        if run_dir is None:
-            messagebox.showinfo("没有历史任务", "请先在历史任务下拉框选择一个可继续的任务。")
-            return
-        if not (run_dir / "imagegen-jobs.json").exists():
+        if run_dir is not None and not (run_dir / "imagegen-jobs.json").exists():
             messagebox.showinfo("无法继续", f"找不到任务状态文件：{run_dir / 'imagegen-jobs.json'}")
             return
         self.save_app_config()
         self.gen_running = True
         self.current_run_dir = run_dir
-        self.status.set("正在继续历史任务...")
+        self.status.set("正在继续历史任务..." if run_dir is not None else "正在生成动画，请稍等...")
         self.clear_generation_log()
-        self.append_generation_log(f"继续历史任务：{run_dir}\n")
+        if run_dir is None:
+            self.append_generation_log("开始生成动画...\n")
+        else:
+            self.append_generation_log(f"继续历史任务：{run_dir}\n")
         thread = threading.Thread(target=self._generation_worker, kwargs={"resume_run_dir": run_dir}, daemon=True)
         thread.start()
 
@@ -690,8 +678,9 @@ class DesktopPetApp:
             if getattr(sys, "frozen", False):
                 cmd = [sys.executable, "--run-generator", *runner_args]
                 self.root.after(0, lambda: self.append_generation_log("命令：\n" + self._redacted_command(cmd) + "\n\n"))
+                self._last_generator_lines = []
                 return_code = self._run_generator_in_process(runner, runner_args)
-                lines: list[str] = []
+                lines = getattr(self, "_last_generator_lines", [])
             else:
                 cmd = [sys.executable, str(runner), *runner_args]
                 self.root.after(0, lambda: self.append_generation_log("命令：\n" + self._redacted_command(cmd) + "\n\n"))
@@ -789,18 +778,22 @@ class DesktopPetApp:
             def __init__(self, app: DesktopPetApp):
                 self.app = app
                 self.buffer = ""
+                self.lines: list[str] = []
 
             def write(self, text: str) -> int:
                 self.buffer += text
                 while "\n" in self.buffer:
                     line, self.buffer = self.buffer.split("\n", 1)
-                    self.app.root.after(0, lambda value=line + "\n": self.app.append_generation_log(value))
+                    value = line + "\n"
+                    self.lines.append(value)
+                    self.app.root.after(0, lambda text=value: self.app.append_generation_log(text))
                 return len(text)
 
             def flush(self) -> None:
                 if self.buffer:
                     text = self.buffer
                     self.buffer = ""
+                    self.lines.append(text)
                     self.app.root.after(0, lambda value=text: self.app.append_generation_log(value))
 
         old_argv = sys.argv[:]
@@ -815,14 +808,18 @@ class DesktopPetApp:
             writer.flush()
             return 0
         except SystemExit as exc:
-            writer.flush()
             code = exc.code
+            if code not in (None, 0) and not isinstance(code, int):
+                writer.write(f"\n{code}\n")
+            writer.flush()
             return int(code) if isinstance(code, int) else 1
         except Exception as exc:
             writer.write(f"\n{exc}\n")
+            writer.write(traceback.format_exc())
             writer.flush()
             return 1
         finally:
+            self._last_generator_lines = writer.lines[-120:]
             sys.argv = old_argv
             sys.stdout = old_stdout
             sys.stderr = old_stderr
@@ -869,7 +866,7 @@ class DesktopPetApp:
             (("向左", "左走", "left"), "move-left"),
         ]
         if any(word in text for word in ("全套", "全部动作", "所有动作", "all actions")):
-            requested = ["idle", "wave", "jump", "cheer", "think", "work", "focus", "move-right", "move-left", "lift", "base", "play"]
+            requested = ["idle", "wave", "jump", "cheer", "think", "work", "focus", "move-right", "move-left", "lift", "play"]
         else:
             requested = []
             for words, action in keyword_actions:
@@ -880,7 +877,7 @@ class DesktopPetApp:
                 actions.append(action)
         interaction_notes = (
             "必须生成桌宠交互所需的基础动作：idle 待机、wave 摸摸/挥手、move-left 左拖、"
-            "move-right 右拖、lift 向上拖动拎起、base 点击静态基础帧、play 无交互时玩耍。"
+            "move-right 右拖、lift 向上拖动拎起、play 无交互时玩耍。点击交互默认绑定 idle；base 只作为内部 canonical base 形象，不是动作。"
             "所有动作必须保持同一个角色身份、比例、配色、材质、轮廓和道具；角色在每个动作格子里的视觉大小必须基本一致，不能有的动作明显变大或变小。"
             "如果提供参考图，只提取主要角色/物体的身份和风格，不要复制参考图里的截图布局、背景、边框、文字、水印、房间、场景或多余人物。"
             "每帧必须是一个完整、清晰、独立的桌宠姿势，纯色可抠除背景，无阴影、无发光、无速度线、无漂浮特效、无文字。"
@@ -931,23 +928,14 @@ class DesktopPetApp:
         runs = [path for path in OUTPUT_DIR.iterdir() if path.is_dir() and (path / "imagegen-jobs.json").exists()]
         runs.sort(key=lambda path: path.stat().st_mtime, reverse=True)
         self.gen_history_options = {}
-        labels = []
+        labels = [NEW_GENERATION_LABEL]
         for run_dir in runs:
             label = self.generation_history_label(run_dir)
             labels.append(label)
             self.gen_history_options[label] = run_dir
         combo.configure(values=labels)
-        previous = self.app_config.get("last_generation_run", "")
-        selected = ""
-        if previous:
-            previous_path = Path(previous)
-            for label, run_dir in self.gen_history_options.items():
-                if run_dir == previous_path:
-                    selected = label
-                    break
-        if not selected and labels:
-            selected = labels[0]
-        self.gen_history_var.set(selected)
+        current = self.gen_history_var.get()
+        self.gen_history_var.set(current if current in labels else NEW_GENERATION_LABEL)
 
     def generation_history_label(self, run_dir: Path) -> str:
         complete = 0
@@ -969,13 +957,16 @@ class DesktopPetApp:
 
     def selected_history_run_dir(self) -> Optional[Path]:
         label = self.gen_history_var.get()
+        if not label or label == NEW_GENERATION_LABEL:
+            return None
         run_dir = self.gen_history_options.get(label)
         if run_dir and run_dir.exists():
             self.app_config["last_generation_run"] = str(run_dir)
             self.save_app_config()
             return run_dir
         self.refresh_generation_history()
-        return self.gen_history_options.get(self.gen_history_var.get())
+        label = self.gen_history_var.get()
+        return None if label == NEW_GENERATION_LABEL else self.gen_history_options.get(label)
 
     def copy_final_to_pet_library(self, run_dir: Path) -> Path:
         pet_dir = PETS_DIR / run_dir.name

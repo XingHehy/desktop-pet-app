@@ -31,7 +31,7 @@ python app.py
 左拖 -> move-left
 右拖 -> move-right
 拎起 -> lift
-点击 -> base
+点击 -> idle
 玩耍 -> play
 ```
 
@@ -58,7 +58,9 @@ python app.py
 6. 程序会自动解析动作，生成日志会实时显示当前步骤。
 7. 生成完成后，程序会自动加载 `final/spritesheet.png`。
 
-生成时会强制包含桌宠基础交互动作：`idle`、`wave`、`move-left`、`move-right`、`lift`、`base`、`play`。
+历史任务下拉框默认选择 `新任务`。保持 `新任务` 时点击 `开始生成` 会创建新的生成目录；选择已有历史任务后点击 `开始生成` 会从该任务未完成的步骤继续。
+
+生成时会强制包含桌宠基础交互动作：`idle`、`wave`、`move-left`、`move-right`、`lift`、`play`。生成流程里的 `decoded/base.png` 只是内部 canonical base 形象，用来锁定角色身份，不是一个动作。
 切分帧时会自动按透明主体包围盒统一角色视觉大小，避免不同动作切换时忽大忽小。
 
 程序会保存上一条指令、API Key、API URL、模型、最后加载的桌宠和桌宠开启状态。下次打开会自动复用。
