@@ -4,40 +4,15 @@
 
 ## 默认宠物预览
 
-仓库包含一个可直接使用的默认宠物：`pets/default/`。
+仓库包含一个可直接使用的默认宠物：`pets/default/`(小特)。
+
+**动作预览**
+
+<img src="pets/default/previews/idle.gif" alt="待机 idle" title="待机" width="150"><img src="pets/default/previews/wave.gif" alt="摸摸/挥手 wave" title="摸摸/挥手" width="150"><img src="pets/default/previews/move-left.gif" alt="左拖 move-left" title="左拖" width="150"><img src="pets/default/previews/move-right.gif" alt="右拖 move-right" title="右拖" width="150"><img src="pets/default/previews/lift.gif" alt="拎起 lift" title="拎起" width="150"><img src="pets/default/previews/play.gif" alt="玩耍 play" title="玩耍" width="150">
 
 **精灵图**
 
 ![默认宠物 spritesheet](pets/default/spritesheet.png)
-
-**动作预览**
-
-<div style="display:flex; gap:16px; overflow-x:auto; padding:8px 0;">
-  <div style="min-width:160px; text-align:center;">
-    <div>待机</div>
-    <img src="pets/default/previews/idle.gif" alt="idle" width="150">
-  </div>
-  <div style="min-width:160px; text-align:center;">
-    <div>摸摸/挥手</div>
-    <img src="pets/default/previews/wave.gif" alt="wave" width="150">
-  </div>
-  <div style="min-width:160px; text-align:center;">
-    <div>左拖</div>
-    <img src="pets/default/previews/move-left.gif" alt="move-left" width="150">
-  </div>
-  <div style="min-width:160px; text-align:center;">
-    <div>右拖</div>
-    <img src="pets/default/previews/move-right.gif" alt="move-right" width="150">
-  </div>
-  <div style="min-width:160px; text-align:center;">
-    <div>拎起</div>
-    <img src="pets/default/previews/lift.gif" alt="lift" width="150">
-  </div>
-  <div style="min-width:160px; text-align:center;">
-    <div>玩耍</div>
-    <img src="pets/default/previews/play.gif" alt="play" width="150">
-  </div>
-</div>
 
 ## 运行
 
@@ -186,3 +161,7 @@ spritesheet.json
   "scale": 1.0
 }
 ```
+
+## 说明
+
+动画生成流程参考了 Codex 的 `hatch-pet` skill：先生成 canonical base 形象，再基于该形象生成动作帧、切分 frames、渲染 previews，并合成为 spritesheet。本项目保留中间产物并面向通用桌宠软件使用，不生成 Codex pet 包。
