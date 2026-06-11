@@ -5,7 +5,10 @@ __pycache__/
 # Local app state
 config/
 output/
-pets/
+!pets/
+pets/*
+!pets/default/
+!pets/default/**
 
 # PyInstaller/build artifacts
 build/

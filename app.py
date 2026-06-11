@@ -170,6 +170,7 @@ class PetWindow(tk.Toplevel):
         self.loop = True
         self.drag_start = (0, 0)
         self.drag_origin = (0, 0)
+        self.drag_last_pointer = (0, 0)
         self.drag_moved = False
         self.drag_interaction = ""
         self.drag_button_down = False
@@ -178,7 +179,7 @@ class PetWindow(tk.Toplevel):
         self.label.bind("<ButtonPress-1>", self._start_drag)
         self.label.bind("<B1-Motion>", self._drag)
         self.label.bind("<ButtonRelease-1>", self._end_drag)
-        self.label.bind("<Enter>", lambda _event: self.emit_interaction("hover"))
+        self.label.bind("<Enter>", self._enter)
         self.label.bind("<Button-3>", self._show_menu)
 
         self.menu = tk.Menu(self, tearoff=False)
@@ -188,27 +189,42 @@ class PetWindow(tk.Toplevel):
     def _start_drag(self, event: tk.Event) -> None:
         self.drag_start = (event.x, event.y)
         self.drag_origin = (self.winfo_pointerx(), self.winfo_pointery())
+        self.drag_last_pointer = self.drag_origin
         self.drag_moved = False
         self.drag_interaction = ""
         self.drag_button_down = True
 
     def _drag(self, _event: tk.Event) -> None:
-        x = self.winfo_pointerx() - self.drag_start[0]
-        y = self.winfo_pointery() - self.drag_start[1]
+        pointer_x = self.winfo_pointerx()
+        pointer_y = self.winfo_pointery()
+        x = pointer_x - self.drag_start[0]
+        y = pointer_y - self.drag_start[1]
         self.geometry(f"+{x}+{y}")
-        dx = self.winfo_pointerx() - self.drag_origin[0]
-        dy = self.winfo_pointery() - self.drag_origin[1]
+        dx = pointer_x - self.drag_origin[0]
+        dy = pointer_y - self.drag_origin[1]
+        step_dx = pointer_x - self.drag_last_pointer[0]
+        step_dy = pointer_y - self.drag_last_pointer[1]
+        self.drag_last_pointer = (pointer_x, pointer_y)
         if abs(dx) < 12 and abs(dy) < 12:
             return
         self.drag_moved = True
-        if dy < -18 and abs(dy) >= abs(dx):
+
+        interaction = self.drag_interaction
+        if abs(step_dy) >= 4 and step_dy < 0 and abs(step_dy) >= abs(step_dx):
             interaction = "drag_up"
-        elif dx < -18:
+        elif abs(step_dx) >= 4 and step_dx < 0:
             interaction = "drag_left"
-        elif dx > 18:
+        elif abs(step_dx) >= 4 and step_dx > 0:
+            interaction = "drag_right"
+        elif not interaction and dy < -18 and abs(dy) >= abs(dx):
+            interaction = "drag_up"
+        elif not interaction and dx < -18:
+            interaction = "drag_left"
+        elif not interaction and dx > 18:
             interaction = "drag_right"
         else:
             return
+
         if interaction != self.drag_interaction:
             self.drag_interaction = interaction
             self.emit_interaction(interaction)
@@ -219,6 +235,10 @@ class PetWindow(tk.Toplevel):
             self.emit_interaction("click")
         else:
             self.emit_interaction("idle")
+
+    def _enter(self, _event: tk.Event) -> None:
+        if not self.drag_button_down:
+            self.emit_interaction("hover")
 
     def _show_menu(self, event: tk.Event) -> None:
         self.menu.tk_popup(event.x_root, event.y_root)
@@ -1489,6 +1509,8 @@ class DesktopPetApp:
             self.root.after(delay, lambda expected=token: self.return_to_idle_if_current(expected))
 
     def return_to_idle_if_current(self, expected_token: int) -> None:
+        if self.pet.drag_button_down:
+            return
         if expected_token == self.action_token:
             self.play_interaction("idle", reset_play_timer=False)
 
@@ -1504,13 +1526,15 @@ class DesktopPetApp:
     def play_interaction(self, interaction: str, reset_play_timer: bool = True) -> None:
         if self.config is None or self.sheet is None:
             return
+        hold_interactions = {"drag_left", "drag_right", "drag_up"}
+        if self.pet.drag_button_down and interaction not in hold_interactions:
+            return
         if reset_play_timer:
             self.schedule_playful_action()
         bindings = self.current_bindings()
         action_id = bindings.get(interaction) or DEFAULT_INTERACTION_BINDINGS.get(interaction)
         if not action_id:
             return
-        hold_interactions = {"drag_left", "drag_right", "drag_up"}
         is_hold = interaction in hold_interactions
         self.play_action_by_id(action_id, return_to_idle=not is_hold and interaction != "idle", force_loop=is_hold)
 

@@ -1,0 +1,102 @@
+{
+  "cell_width": 192,
+  "cell_height": 208,
+  "method": "auto",
+  "normalize_subject": true,
+  "actions": [
+    {
+      "id": "idle",
+      "display_name": "\u5f85\u673a",
+      "frames": 6,
+      "frame_paths": [
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\idle\\idle_00.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\idle\\idle_01.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\idle\\idle_02.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\idle\\idle_03.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\idle\\idle_04.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\idle\\idle_05.png"
+      ]
+    },
+    {
+      "id": "wave",
+      "display_name": "\u6325\u624b",
+      "frames": 6,
+      "frame_paths": [
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\wave\\wave_00.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\wave\\wave_01.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\wave\\wave_02.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\wave\\wave_03.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\wave\\wave_04.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\wave\\wave_05.png"
+      ]
+    },
+    {
+      "id": "move-left",
+      "display_name": "\u5411\u5de6\u79fb\u52a8",
+      "frames": 8,
+      "frame_paths": [
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-left\\move-left_00.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-left\\move-left_01.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-left\\move-left_02.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-left\\move-left_03.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-left\\move-left_04.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-left\\move-left_05.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-left\\move-left_06.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-left\\move-left_07.png"
+      ]
+    },
+    {
+      "id": "move-right",
+      "display_name": "\u5411\u53f3\u79fb\u52a8",
+      "frames": 8,
+      "frame_paths": [
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-right\\move-right_00.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-right\\move-right_01.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-right\\move-right_02.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-right\\move-right_03.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-right\\move-right_04.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-right\\move-right_05.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-right\\move-right_06.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\move-right\\move-right_07.png"
+      ]
+    },
+    {
+      "id": "lift",
+      "display_name": "\u62ce\u8d77",
+      "frames": 6,
+      "frame_paths": [
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\lift\\lift_00.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\lift\\lift_01.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\lift\\lift_02.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\lift\\lift_03.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\lift\\lift_04.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\lift\\lift_05.png"
+      ]
+    },
+    {
+      "id": "base",
+      "display_name": "\u57fa\u7840\u9759\u5e27",
+      "frames": 1,
+      "frame_paths": [
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\base\\base_00.png"
+      ]
+    },
+    {
+      "id": "play",
+      "display_name": "\u73a9\u800d",
+      "frames": 6,
+      "frame_paths": [
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\play\\play_00.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\play\\play_01.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\play\\play_02.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\play\\play_03.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\play\\play_04.png",
+        "C:\\Users\\Owner\\Documents\\Codex\\2026-06-09\\hatch-pet-skill-frames-previews-codex\\outputs\\desktop-pet-app\\output\\20260611-171301-1bb3b0\\final\\frames\\play\\play_05.png"
+      ]
+    }
+  ],
+  "subject_target": {
+    "width": 63,
+    "height": 121
+  }
+}

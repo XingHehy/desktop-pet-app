@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "image": "spritesheet.png",
+  "cell": {
+    "width": 192,
+    "height": 208
+  },
+  "actions": [
+    {
+      "id": "idle",
+      "name": "待机",
+      "row": 0,
+      "frames": 6,
+      "fps": 8.0,
+      "loop": true
+    },
+    {
+      "id": "wave",
+      "name": "挥手",
+      "row": 1,
+      "frames": 6,
+      "fps": 8.0,
+      "loop": true
+    },
+    {
+      "id": "move-left",
+      "name": "向左移动",
+      "row": 2,
+      "frames": 8,
+      "fps": 8.0,
+      "loop": true
+    },
+    {
+      "id": "move-right",
+      "name": "向右移动",
+      "row": 3,
+      "frames": 8,
+      "fps": 8.0,
+      "loop": true
+    },
+    {
+      "id": "lift",
+      "name": "拎起",
+      "row": 4,
+      "frames": 6,
+      "fps": 8.0,
+      "loop": true
+    },
+    {
+      "id": "base",
+      "name": "基础静帧",
+      "row": 5,
+      "frames": 1,
+      "fps": 8.0,
+      "loop": true
+    },
+    {
+      "id": "play",
+      "name": "玩耍",
+      "row": 6,
+      "frames": 6,
+      "fps": 8.0,
+      "loop": true
+    }
+  ],
+  "anchor": {
+    "x": 96,
+    "y": 208
+  },
+  "scale": 1.1,
+  "nickname": "特朗普",
+  "interaction_bindings": {
+    "idle": "base",
+    "hover": "wave",
+    "drag_left": "move-left",
+    "drag_right": "move-right",
+    "drag_up": "lift",
+    "click": "idle",
+    "play": "play"
+  }
+}

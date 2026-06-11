@@ -2,6 +2,43 @@
 
 这是一个完整桌宠小工具：可以导入已有 spritesheet 播放，也可以在软件里直接调用 OpenAI Images API 生成动作帧、GIF 预览和 spritesheet。
 
+## 默认宠物预览
+
+仓库包含一个可直接使用的默认宠物：`pets/default/`。
+
+**精灵图**
+
+![默认宠物 spritesheet](pets/default/spritesheet.png)
+
+**动作预览**
+
+<div style="display:flex; gap:16px; overflow-x:auto; padding:8px 0;">
+  <div style="min-width:160px; text-align:center;">
+    <div>待机</div>
+    <img src="pets/default/previews/idle.gif" alt="idle" width="150">
+  </div>
+  <div style="min-width:160px; text-align:center;">
+    <div>摸摸/挥手</div>
+    <img src="pets/default/previews/wave.gif" alt="wave" width="150">
+  </div>
+  <div style="min-width:160px; text-align:center;">
+    <div>左拖</div>
+    <img src="pets/default/previews/move-left.gif" alt="move-left" width="150">
+  </div>
+  <div style="min-width:160px; text-align:center;">
+    <div>右拖</div>
+    <img src="pets/default/previews/move-right.gif" alt="move-right" width="150">
+  </div>
+  <div style="min-width:160px; text-align:center;">
+    <div>拎起</div>
+    <img src="pets/default/previews/lift.gif" alt="lift" width="150">
+  </div>
+  <div style="min-width:160px; text-align:center;">
+    <div>玩耍</div>
+    <img src="pets/default/previews/play.gif" alt="play" width="150">
+  </div>
+</div>
+
 ## 运行
 
 ```bash
