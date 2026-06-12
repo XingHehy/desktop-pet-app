@@ -186,6 +186,8 @@ class PetWindow(tk.Toplevel):
         self.drag_moved = False
         self.drag_interaction = ""
         self.drag_button_down = False
+        self.drag_pending_position: Optional[tuple[int, int]] = None
+        self.drag_move_after_id: Optional[str] = None
         self.interaction_handler = None
         self.position_handler = None
 
@@ -212,8 +214,7 @@ class PetWindow(tk.Toplevel):
         pointer_y = self.winfo_pointery()
         x = pointer_x - self.drag_start[0]
         y = pointer_y - self.drag_start[1]
-        self.geometry(f"+{x}+{y}")
-        self.emit_position_changed()
+        self.queue_drag_geometry(x, y)
         dx = pointer_x - self.drag_origin[0]
         dy = pointer_y - self.drag_origin[1]
         step_dx = pointer_x - self.drag_last_pointer[0]
@@ -244,6 +245,7 @@ class PetWindow(tk.Toplevel):
             self.emit_interaction(interaction)
 
     def _end_drag(self, _event: tk.Event) -> None:
+        self.apply_queued_drag_geometry()
         self.drag_button_down = False
         if not self.drag_moved:
             self.emit_interaction("click")
@@ -271,12 +273,37 @@ class PetWindow(tk.Toplevel):
         if self.position_handler is not None:
             self.position_handler()
 
+    def queue_drag_geometry(self, x: int, y: int) -> None:
+        self.drag_pending_position = (x, y)
+        if self.drag_move_after_id is None:
+            self.drag_move_after_id = self.after(8, self.apply_queued_drag_geometry)
+
+    def apply_queued_drag_geometry(self) -> None:
+        self.drag_move_after_id = None
+        if self.drag_pending_position is None:
+            return
+        x, y = self.drag_pending_position
+        self.drag_pending_position = None
+        self.geometry(f"+{x}+{y}")
+        self.emit_position_changed()
+
     def show_action(self, frames: list[Image.Image], fps: float, loop: bool, scale: float = 1.0) -> None:
         self.stop()
         self.index = 0
         self.fps = max(0.1, fps)
         self.loop = loop
         self.tk_frames = [self._to_tk(frame, scale) for frame in frames]
+        if not self.tk_frames:
+            return
+        self.deiconify()
+        self._tick()
+
+    def show_prepared_action(self, tk_frames: list[ImageTk.PhotoImage], fps: float, loop: bool) -> None:
+        self.stop()
+        self.index = 0
+        self.fps = max(0.1, fps)
+        self.loop = loop
+        self.tk_frames = tk_frames
         if not self.tk_frames:
             return
         self.deiconify()
@@ -407,6 +434,7 @@ class DesktopPetApp:
         self.binding_vars = {key: tk.StringVar(value=default) for key, _label, default in INTERACTION_SPECS}
         self.binding_combos: list[ttk.Combobox] = []
         self.playful_after_id: Optional[str] = None
+        self.bubble_follow_after_id: Optional[str] = None
         self.reminder_tree: Optional[ttk.Treeview] = None
         self.app_started_at = datetime.now()
         self.reminder_scheduler = ReminderScheduler(self.root, self.fire_reminder, self.app_started_at)
@@ -415,6 +443,7 @@ class DesktopPetApp:
         self.current_action_id = ""
         self.current_force_loop = False
         self.pet_position_applied = False
+        self.action_frame_cache: dict[tuple[str, float], list[ImageTk.PhotoImage]] = {}
         self.tray_icon = None
         self.is_quitting = False
 
@@ -487,19 +516,49 @@ class DesktopPetApp:
 
     def quit_app(self) -> None:
         self.is_quitting = True
-        self.save_current_pet_state(enabled=bool(self.pet.winfo_ismapped()))
+        self.action_token += 1
+        self.save_current_pet_state(enabled=self.pet_is_mapped())
         if self.playful_after_id:
             self.root.after_cancel(self.playful_after_id)
             self.playful_after_id = None
+        if self.scale_refresh_after_id:
+            self.root.after_cancel(self.scale_refresh_after_id)
+            self.scale_refresh_after_id = None
+        if self.bubble_follow_after_id:
+            self.root.after_cancel(self.bubble_follow_after_id)
+            self.bubble_follow_after_id = None
+        if self.pet_exists() and self.pet.drag_move_after_id:
+            self.pet.after_cancel(self.pet.drag_move_after_id)
+            self.pet.drag_move_after_id = None
         self.reminder_scheduler.cancel()
         if self.tray_icon is not None:
             self.tray_icon.stop()
             self.tray_icon = None
-        self.pet.stop()
-        self.bubble.hide()
-        self.bubble.destroy()
-        self.pet.destroy()
+        if self.pet_exists():
+            self.pet.stop()
+            self.pet.destroy()
+        if self.bubble_exists():
+            self.bubble.hide()
+            self.bubble.destroy()
         self.root.destroy()
+
+    def pet_exists(self) -> bool:
+        try:
+            return bool(self.pet.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def pet_is_mapped(self) -> bool:
+        try:
+            return self.pet_exists() and bool(self.pet.winfo_ismapped())
+        except tk.TclError:
+            return False
+
+    def bubble_exists(self) -> bool:
+        try:
+            return bool(self.bubble.winfo_exists())
+        except tk.TclError:
+            return False
 
     def _build_ui(self) -> None:
         style = ttk.Style(self.root)
@@ -683,6 +742,7 @@ class DesktopPetApp:
         ttk.Label(history_frame, text="历史任务").grid(row=0, column=0, sticky="w", padx=(0, 6))
         self.gen_history_combo = ttk.Combobox(history_frame, textvariable=self.gen_history_var, state="readonly")
         self.gen_history_combo.grid(row=0, column=1, sticky="ew")
+        self.gen_history_combo.bind("<<ComboboxSelected>>", lambda _event: self.on_generation_history_changed())
 
         help_text = (
             "例：生成一个开心的小猫桌宠，会待机、挥手、跳起来。"
@@ -1205,11 +1265,13 @@ class DesktopPetApp:
         )
         if not paths:
             return
+        self.gen_history_var.set(NEW_GENERATION_LABEL)
         self.gen_references = [Path(path) for path in paths]
         self.update_reference_label()
         self.save_app_config()
 
     def clear_reference_images(self) -> None:
+        self.gen_history_var.set(NEW_GENERATION_LABEL)
         self.gen_references = []
         self.update_reference_label()
         self.save_app_config()
@@ -1265,22 +1327,25 @@ class DesktopPetApp:
             messagebox.showerror("设置失败", str(exc))
 
     def update_reference_label(self) -> None:
-        if not self.gen_references:
-            self.gen_reference_label.set("未选择")
-            self.render_reference_previews()
+        run_dir = self.selected_history_preview_run_dir()
+        references = self.history_reference_images(run_dir) if run_dir else self.gen_references
+        if not references:
+            self.gen_reference_label.set("历史任务无参考图" if run_dir else "未选择")
+            self.render_reference_previews([])
             return
-        names = [path.name for path in self.gen_references[:3]]
-        extra = f"\n等 {len(self.gen_references)} 张" if len(self.gen_references) > 3 else ""
+        names = [path.name for path in references[:3]]
+        extra = f"\n等 {len(references)} 张" if len(references) > 3 else ""
         self.gen_reference_label.set("\n".join(names) + extra)
-        self.render_reference_previews()
+        self.render_reference_previews(references)
 
-    def render_reference_previews(self) -> None:
+    def render_reference_previews(self, references: Optional[list[Path]] = None) -> None:
         if self.gen_reference_preview_frame is None:
             return
         for child in self.gen_reference_preview_frame.winfo_children():
             child.destroy()
         self.gen_reference_preview_refs = []
-        for index, path in enumerate(self.gen_references[:4]):
+        references = self.gen_references if references is None else references
+        for index, path in enumerate(references[:4]):
             try:
                 img = Image.open(path).convert("RGBA")
                 img.thumbnail((84, 84), Image.Resampling.LANCZOS)
@@ -1292,6 +1357,33 @@ class DesktopPetApp:
                 label.grid(row=index // 2, column=index % 2, padx=3, pady=3)
             except Exception:
                 ttk.Label(self.gen_reference_preview_frame, text="无法预览").grid(row=index // 2, column=index % 2, padx=3, pady=3)
+
+    def on_generation_history_changed(self) -> None:
+        run_dir = self.selected_history_preview_run_dir()
+        if run_dir:
+            self.app_config["last_generation_run"] = str(run_dir)
+            self.save_app_config()
+        self.update_reference_label()
+
+    def selected_history_preview_run_dir(self) -> Optional[Path]:
+        label = self.gen_history_var.get()
+        if not label or label == NEW_GENERATION_LABEL:
+            return None
+        run_dir = self.gen_history_options.get(label)
+        return run_dir if run_dir and run_dir.exists() else None
+
+    def history_reference_images(self, run_dir: Path) -> list[Path]:
+        references_dir = run_dir / "references"
+        if not references_dir.exists():
+            return []
+        image_exts = {".png", ".jpg", ".jpeg", ".webp"}
+        return sorted(
+            (
+                path for path in references_dir.iterdir()
+                if path.is_file() and path.suffix.lower() in image_exts and path.name.startswith("reference-")
+            ),
+            key=lambda path: path.name,
+        )
 
     def valid_reference_images(self) -> list[Path]:
         valid = []
@@ -1485,6 +1577,7 @@ class DesktopPetApp:
         combo.configure(values=labels)
         current = self.gen_history_var.get()
         self.gen_history_var.set(current if current in labels else NEW_GENERATION_LABEL)
+        self.update_reference_label()
 
     def generation_history_label(self, run_dir: Path) -> str:
         complete = 0
@@ -1538,6 +1631,14 @@ class DesktopPetApp:
 
     def _build_json_from_generated_run(self, run_dir: Path) -> dict:
         request = json.loads((run_dir / "animation_request.json").read_text(encoding="utf-8"))
+        frames_manifest_path = run_dir / "final" / "frames" / "frames-manifest.json"
+        if frames_manifest_path.exists():
+            frames_manifest = json.loads(frames_manifest_path.read_text(encoding="utf-8"))
+            cell_width = int(frames_manifest.get("cell_width", request["cell_width"]))
+            cell_height = int(frames_manifest.get("cell_height", request["cell_height"]))
+        else:
+            cell_width = int(request["cell_width"])
+            cell_height = int(request["cell_height"])
         actions = []
         for row, action in enumerate(request["actions"]):
             actions.append({
@@ -1551,12 +1652,12 @@ class DesktopPetApp:
         return {
             "version": 1,
             "image": "spritesheet.png",
-            "cell": {"width": request["cell_width"], "height": request["cell_height"]},
+            "cell": {"width": cell_width, "height": cell_height},
             "nickname": "",
             "interaction_bindings": DEFAULT_INTERACTION_BINDINGS,
             "actions": actions,
-            "anchor": {"x": request["cell_width"] // 2, "y": request["cell_height"]},
-            "scale": self.clamp_display_scale(),
+            "anchor": {"x": cell_width // 2, "y": cell_height},
+            "scale": self.default_pet_scale(cell_width, cell_height),
         }
 
     def import_spritesheet(self) -> None:
@@ -1753,6 +1854,10 @@ class DesktopPetApp:
                 )
             )
 
+        scale_value = data.get("scale")
+        if scale_value is None:
+            scale_value = self.default_pet_scale(cell_width, cell_height)
+
         self.config = SpriteConfig(
             image=str(self.image_path.name if self.image_path else image_value or ""),
             cell_width=cell_width,
@@ -1760,7 +1865,7 @@ class DesktopPetApp:
             actions=actions,
             anchor_x=int(data.get("anchor", {}).get("x", cell_width // 2)),
             anchor_y=int(data.get("anchor", {}).get("y", cell_height)),
-            scale=self.clamped_display_scale(data.get("scale", self.scale.get())),
+            scale=self.clamped_display_scale(scale_value),
             nickname=str(data.get("nickname", "")),
             interaction_bindings=self.normalize_bindings(data.get("interaction_bindings")),
         )
@@ -1769,12 +1874,19 @@ class DesktopPetApp:
         self.cols.set(self._infer_cols(cell_width))
         self.rows.set(max(1, math.ceil(self.sheet.height / cell_height)))
         self.scale.set(self.config.scale)
+        self.action_frame_cache.clear()
         self.pet_nickname.set(self.config.nickname)
         self.set_binding_vars(self.config.interaction_bindings)
         self._refresh_tree()
         self.refresh_binding_options()
         self.status.set(f"已导入 JSON：{path}")
         self.save_current_pet_state(enabled=False)
+
+    def default_pet_scale(self, cell_width: int, cell_height: int) -> float:
+        target_width = 220
+        target_height = 260
+        scale = min(1.0, target_width / max(1, cell_width), target_height / max(1, cell_height))
+        return round(self.clamped_display_scale(scale), 2)
 
     def clamped_display_scale(self, value: object | None = None) -> float:
         try:
@@ -1801,14 +1913,17 @@ class DesktopPetApp:
     def apply_display_scale_change(self) -> None:
         self.scale_refresh_after_id = None
         self.clamp_display_scale()
+        self.action_frame_cache.clear()
         if self.config is None or self.sheet is None:
             return
-        if self.pet.winfo_ismapped() and self.current_action_id:
+        if self.pet_is_mapped() and self.current_action_id:
             action = next((item for item in self.config.actions if item.id == self.current_action_id), None)
             if action is not None:
                 self.play_action(action, return_to_idle=False, force_loop=self.current_force_loop)
         else:
-            self.save_current_pet_state(enabled=bool(self.pet.winfo_ismapped()))
+            self.save_current_pet_state(enabled=self.pet_is_mapped())
+        if self.json_path is not None:
+            self.save_json(self.json_path)
 
     def normalize_bindings(self, raw: object) -> dict[str, str]:
         bindings = dict(DEFAULT_INTERACTION_BINDINGS)
@@ -1882,7 +1997,7 @@ class DesktopPetApp:
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         self.status.set(f"已保存：{path}")
-        self.save_current_pet_state(enabled=bool(self.pet.winfo_ismapped()))
+        self.save_current_pet_state(enabled=self.pet_is_mapped())
 
     def _infer_grid(self) -> None:
         assert self.sheet is not None
@@ -2016,41 +2131,76 @@ class DesktopPetApp:
             return
         self.play_action(action, return_to_idle=False)
 
-    def play_action(self, action: ActionConfig, return_to_idle: bool = False, force_loop: bool = False) -> None:
-        if self.sheet is None or self.config is None:
+    def prepared_tk_frames(self, action: ActionConfig, scale: float) -> list[ImageTk.PhotoImage]:
+        key = (action.id, scale)
+        cached = self.action_frame_cache.get(key)
+        if cached is not None:
+            return cached
+        frames = self.slice_action(action)
+        tk_frames = [self.pet._to_tk(frame, scale) for frame in frames]
+        self.action_frame_cache[key] = tk_frames
+        return tk_frames
+
+    def play_action(
+        self,
+        action: ActionConfig,
+        return_to_idle: bool = False,
+        force_loop: bool = False,
+        persist_state: bool = True,
+        reset_play_timer: bool = True,
+    ) -> None:
+        if self.is_quitting or self.sheet is None or self.config is None or not self.pet_exists():
             return
         self.action_token += 1
         token = self.action_token
         self.current_action_id = action.id
         self.current_force_loop = force_loop
-        frames = self.slice_action(action)
-        self.pet.show_action(frames, action.fps, action.loop or force_loop, self.clamp_display_scale())
+        scale = self.clamp_display_scale()
+        tk_frames = self.prepared_tk_frames(action, scale)
+        self.pet.show_prepared_action(tk_frames, action.fps, action.loop or force_loop)
         self.root.after(0, self.apply_saved_or_default_pet_position)
         self.root.after(700, self.maybe_show_startup_greeting)
         self.status.set(f"正在播放：{action.name}")
-        self.save_current_pet_state(enabled=True)
-        self.schedule_playful_action()
+        if persist_state:
+            self.save_current_pet_state(enabled=True)
+        if reset_play_timer:
+            self.schedule_playful_action()
         if return_to_idle and action.id != self.current_bindings().get("idle"):
             delay = max(500, round(1000 * max(1, action.frames) / max(0.1, action.fps)))
             self.root.after(delay, lambda expected=token: self.return_to_idle_if_current(expected))
 
     def return_to_idle_if_current(self, expected_token: int) -> None:
+        if self.is_quitting or not self.pet_exists():
+            return
         if self.pet.drag_button_down:
             return
         if expected_token == self.action_token:
             self.play_interaction("idle", reset_play_timer=False)
 
-    def play_action_by_id(self, action_id: str, return_to_idle: bool = True, force_loop: bool = False) -> bool:
-        if self.config is None:
+    def play_action_by_id(
+        self,
+        action_id: str,
+        return_to_idle: bool = True,
+        force_loop: bool = False,
+        persist_state: bool = True,
+        reset_play_timer: bool = True,
+    ) -> bool:
+        if self.is_quitting or self.config is None or not self.pet_exists():
             return False
         action = next((item for item in self.config.actions if item.id == action_id), None)
         if action is None:
             return False
-        self.play_action(action, return_to_idle=return_to_idle, force_loop=force_loop)
+        self.play_action(
+            action,
+            return_to_idle=return_to_idle,
+            force_loop=force_loop,
+            persist_state=persist_state,
+            reset_play_timer=reset_play_timer,
+        )
         return True
 
     def play_interaction(self, interaction: str, reset_play_timer: bool = True) -> None:
-        if self.config is None or self.sheet is None:
+        if self.is_quitting or self.config is None or self.sheet is None or not self.pet_exists():
             return
         hold_interactions = {"drag_left", "drag_right", "drag_up"}
         if self.pet.drag_button_down and interaction not in hold_interactions:
@@ -2062,7 +2212,13 @@ class DesktopPetApp:
         if not action_id:
             return
         is_hold = interaction in hold_interactions
-        self.play_action_by_id(action_id, return_to_idle=not is_hold and interaction != "idle", force_loop=is_hold)
+        self.play_action_by_id(
+            action_id,
+            return_to_idle=not is_hold and interaction != "idle",
+            force_loop=is_hold,
+            persist_state=not is_hold,
+            reset_play_timer=reset_play_timer and not is_hold,
+        )
 
     def pet_position(self) -> dict[str, int]:
         try:
@@ -2071,7 +2227,7 @@ class DesktopPetApp:
             return {}
 
     def apply_saved_or_default_pet_position(self) -> None:
-        if self.pet_position_applied:
+        if self.is_quitting or self.pet_position_applied or not self.pet_exists():
             return
         self.pet.update_idletasks()
         raw_position = self.app_config.get("pet_position")
@@ -2115,7 +2271,7 @@ class DesktopPetApp:
 
     def playful_action(self) -> None:
         self.playful_after_id = None
-        if not self.pet.winfo_ismapped():
+        if self.is_quitting or not self.pet_is_mapped():
             return
         if self.pet.drag_button_down:
             self.schedule_playful_action()
@@ -2124,6 +2280,8 @@ class DesktopPetApp:
         self.schedule_playful_action()
 
     def hide_pet(self) -> None:
+        if not self.pet_exists():
+            return
         self.pet.withdraw()
         self.bubble.hide()
         if self.playful_after_id:
@@ -2132,10 +2290,22 @@ class DesktopPetApp:
         self.save_current_pet_state(enabled=False)
 
     def handle_pet_position_changed(self) -> None:
+        if self.is_quitting:
+            return
+        if self.bubble_follow_after_id is not None:
+            return
+        self.bubble_follow_after_id = self.root.after(33, self.follow_bubble_if_needed)
+
+    def follow_bubble_if_needed(self) -> None:
+        self.bubble_follow_after_id = None
+        if self.is_quitting:
+            return
         self.bubble.follow_anchor()
 
     def show_pet_bubble(self, text: str, duration_ms: int = 4500) -> None:
-        if not self.pet.winfo_ismapped():
+        if self.is_quitting or not self.pet_exists():
+            return
+        if not self.pet_is_mapped():
             if self.sheet is not None and self.config is not None:
                 self.play_selected()
                 self.root.after(800, lambda value=text, delay=duration_ms: self.show_pet_bubble(value, delay))
@@ -2145,7 +2315,7 @@ class DesktopPetApp:
     def maybe_show_startup_greeting(self) -> None:
         if self.greeted_this_session or not self.startup_greeting_enabled.get():
             return
-        if not self.pet.winfo_ismapped():
+        if self.is_quitting or not self.pet_is_mapped():
             return
         self.greeted_this_session = True
         self.show_pet_bubble(startup_greeting_message(), 5000)
@@ -2211,7 +2381,7 @@ class DesktopPetApp:
             "last_pet_json": str(self.json_path) if self.json_path else "",
             "pet_enabled": enabled,
         })
-        if enabled and self.pet.winfo_ismapped() and self.pet_position_applied:
+        if enabled and self.pet_is_mapped() and self.pet_position_applied:
             self.app_config["pet_position"] = self.pet_position()
         APP_CONFIG.write_text(json.dumps(self.app_config, indent=2, ensure_ascii=False), encoding="utf-8")
 

@@ -43,7 +43,6 @@ class BubbleWindow(tk.Toplevel):
         anchor = self.anchor
         if anchor is None or not anchor.winfo_ismapped():
             return
-        anchor.update_idletasks()
         bubble_w, bubble_h = 240, 92
         screen_w = self.winfo_screenwidth()
         x = anchor.winfo_x() + max(0, (anchor.winfo_width() - bubble_w) // 2)
