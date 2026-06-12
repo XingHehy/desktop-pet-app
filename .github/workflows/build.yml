@@ -134,7 +134,16 @@ jobs:
         run: |
           package="${{ matrix.package-name }}"
           mkdir -p "package/$package/config" "package/$package/output" "package/$package/pets"
-          cp -R "dist/DesktopPet.app" "package/$package/DesktopPet.app"
+          if [ -d "dist/DesktopPet.app" ]; then
+            cp -R "dist/DesktopPet.app" "package/$package/DesktopPet.app"
+          elif [ -f "dist/DesktopPet" ]; then
+            cp "dist/DesktopPet" "package/$package/DesktopPet"
+            chmod +x "package/$package/DesktopPet"
+          else
+            echo "DesktopPet macOS build output not found"
+            find dist -maxdepth 2 -print
+            exit 1
+          fi
           cp -R "pets/default" "package/$package/pets/default"
           ditto -c -k --sequesterRsrc --keepParent "package/$package" "package/$package.zip"
 
