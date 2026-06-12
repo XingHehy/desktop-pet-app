@@ -369,9 +369,10 @@ class ScrollableFrame(ttk.Frame):
 
 
 class DesktopPetApp:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, first_launch: bool = False):
         self.ensure_app_dirs()
         self.root = root
+        self.first_launch = first_launch
         self.root.title("桌宠精灵图播放器")
         self.root.geometry("980x720")
         self.root.minsize(820, 560)
@@ -453,6 +454,8 @@ class DesktopPetApp:
         self.refresh_generation_history()
         self.refresh_pet_library()
         self.restore_last_pet()
+        if self.first_launch:
+            self.root.after(0, self._show_main_window_on_ui_thread)
         self.schedule_reminder()
 
     def ensure_app_dirs(self) -> None:
@@ -2441,9 +2444,11 @@ def run_embedded_generator() -> int:
 def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "--run-generator":
         return run_embedded_generator()
+    first_launch = not APP_CONFIG.exists() and not LEGACY_APP_CONFIG.exists()
     root = tk.Tk()
-    root.withdraw()
-    DesktopPetApp(root)
+    if not first_launch:
+        root.withdraw()
+    DesktopPetApp(root, first_launch=first_launch)
     root.mainloop()
     return 0
 
