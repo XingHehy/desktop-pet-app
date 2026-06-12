@@ -27,6 +27,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from PIL import Image, ImageDraw
+except ImportError:  # pragma: no cover
+    Image = None
+    ImageDraw = None
+
 
 DEFAULT_MODEL = "gpt-image-2"
 
@@ -63,6 +69,41 @@ def read_text(path: Path) -> str:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def make_layout_guide(path: Path, frames: int, cell_width: int, cell_height: int) -> None:
+    if Image is None or ImageDraw is None:
+        raise SystemExit("Missing dependency: Pillow ImageDraw is required to create layout guides.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img = Image.new("RGB", (frames * cell_width, cell_height), "#f7f7f7")
+    draw = ImageDraw.Draw(img)
+    safe_x = max(18, round(cell_width * 0.14))
+    safe_y = max(14, round(cell_height * 0.08))
+    for index in range(frames):
+        x0 = index * cell_width
+        x1 = x0 + cell_width - 1
+        draw.rectangle((x0, 0, x1, cell_height - 1), outline="#111111", width=2)
+        draw.rectangle((x0 + safe_x, safe_y, x1 - safe_x, cell_height - 1 - safe_y), outline="#2f80ed", width=2)
+        draw.line((x0 + cell_width // 2, safe_y, x0 + cell_width // 2, cell_height - 1 - safe_y), fill="#b8b8b8", width=1)
+        draw.line((x0 + safe_x, cell_height // 2, x1 - safe_x, cell_height // 2), fill="#b8b8b8", width=1)
+    img.save(path)
+
+
+def repair_missing_layout_guides(run_dir: Path, manifest: dict[str, Any]) -> None:
+    cell_width = int(manifest.get("cell_width") or 192)
+    cell_height = int(manifest.get("cell_height") or 208)
+    for job in manifest.get("jobs", []):
+        if job.get("kind") != "action-strip":
+            continue
+        frames = int(job.get("frames") or 6)
+        for item in job.get("input_images", []):
+            rel_path = str(item.get("path", "")).replace("\\", "/")
+            if not rel_path.startswith("references/layout-guides/"):
+                continue
+            guide = run_dir / rel_path
+            if not guide.exists():
+                make_layout_guide(guide, frames, cell_width, cell_height)
+                print(f"Repaired missing layout guide: {guide}", flush=True)
 
 
 def ensure_client(dry_run: bool, *, api_key: str | None = None, base_url: str | None = None):
@@ -283,6 +324,7 @@ def run_generation(
 
     while True:
         manifest = json.loads(jobs_path.read_text(encoding="utf-8"))
+        repair_missing_layout_guides(run_dir, manifest)
         jobs = ready_jobs(manifest)
         if not jobs:
             pending = [job for job in manifest["jobs"] if job.get("status") != "complete"]

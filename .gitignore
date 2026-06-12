@@ -13,7 +13,6 @@ pets/*
 # PyInstaller/build artifacts
 build/
 dist/
-*.spec
 
 # Local environment files
 .env

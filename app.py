@@ -26,7 +26,7 @@ except ModuleNotFoundError as exc:
         raise SystemExit(1) from exc
     raise
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageTk
 import numpy as np  # Ensures PyInstaller bundles generator dependency.
 import openai  # Ensures PyInstaller bundles generator dependency.
 import pystray

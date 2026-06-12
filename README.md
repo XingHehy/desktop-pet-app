@@ -105,20 +105,14 @@ desktop-pet-app/
 
 ## 可选打包 EXE
 
-仓库不依赖固定的本地打包脚本。需要在本机发布 Windows 单文件程序时，也可以在自己的 Python 环境里安装 PyInstaller 后打包：
+仓库使用 `DesktopPet.spec` 作为统一打包配置。本地打包和 GitHub Actions 使用同一套配置：
 
 ```powershell
 python -m pip install -r requirements.txt
-python -m PyInstaller `
-  --noconfirm `
-  --onefile `
-  --windowed `
-  --name DesktopPet `
-  --add-data "generator;generator" `
-  app.py
+python -m PyInstaller --noconfirm DesktopPet.spec
 ```
 
-打包命令会把 `generator/` 生成器一起放进 exe。不同平台的 `--add-data` 分隔符不同：Windows 使用 `源;目标`，macOS/Linux 使用 `源:目标`。
+`DesktopPet.spec` 会把 `generator/` 生成器和生成流程需要的 Pillow 子模块一起放进 exe。
 
 打包完成后，发布目录是：
 

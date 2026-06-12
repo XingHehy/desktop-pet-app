@@ -234,7 +234,7 @@ def write_text(path: Path, text: str) -> None:
 
 def make_layout_guide(path: Path, frames: int, cell_width: int, cell_height: int, bg_hex: str) -> None:
     if Image is None or ImageDraw is None:
-        return
+        raise RuntimeError("Pillow ImageDraw is required to create layout guides.")
     path.parent.mkdir(parents=True, exist_ok=True)
     img = Image.new("RGB", (frames * cell_width, cell_height), "#f7f7f7")
     draw = ImageDraw.Draw(img)
@@ -353,6 +353,8 @@ No text, labels, logos, UI, scenery, guide marks, shadows, floor shadows, glows,
     for action in actions:
         guide = run_dir / "references/layout-guides" / f"{action['id']}.png"
         make_layout_guide(guide, action["frames"], args.cell_width, args.cell_height, background_hex)
+        if not guide.exists():
+            raise SystemExit(f"failed to create layout guide: {guide}")
         write_text(
             run_dir / "prompts/actions" / f"{action['id']}.md",
             f"""
