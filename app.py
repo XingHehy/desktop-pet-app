@@ -12,7 +12,7 @@ import sys
 import threading
 import traceback
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -31,6 +31,15 @@ import numpy as np  # Ensures PyInstaller bundles generator dependency.
 import openai  # Ensures PyInstaller bundles generator dependency.
 import pystray
 from pystray import MenuItem as TrayMenuItem
+
+from bubble import BubbleWindow
+from reminders import (
+    ReminderScheduler,
+    is_builtin_reminder,
+    merge_builtin_reminders,
+    next_reminder_times,
+    startup_greeting_message,
+)
 
 
 TRANSPARENT_COLOR = "#ff00ff"
@@ -178,6 +187,7 @@ class PetWindow(tk.Toplevel):
         self.drag_interaction = ""
         self.drag_button_down = False
         self.interaction_handler = None
+        self.position_handler = None
 
         self.label.bind("<ButtonPress-1>", self._start_drag)
         self.label.bind("<B1-Motion>", self._drag)
@@ -203,6 +213,7 @@ class PetWindow(tk.Toplevel):
         x = pointer_x - self.drag_start[0]
         y = pointer_y - self.drag_start[1]
         self.geometry(f"+{x}+{y}")
+        self.emit_position_changed()
         dx = pointer_x - self.drag_origin[0]
         dy = pointer_y - self.drag_origin[1]
         step_dx = pointer_x - self.drag_last_pointer[0]
@@ -249,9 +260,16 @@ class PetWindow(tk.Toplevel):
     def set_interaction_handler(self, handler) -> None:
         self.interaction_handler = handler
 
+    def set_position_handler(self, handler) -> None:
+        self.position_handler = handler
+
     def emit_interaction(self, interaction: str) -> None:
         if self.interaction_handler is not None:
             self.interaction_handler(interaction)
+
+    def emit_position_changed(self) -> None:
+        if self.position_handler is not None:
+            self.position_handler()
 
     def show_action(self, frames: list[Image.Image], fps: float, loop: bool, scale: float = 1.0) -> None:
         self.stop()
@@ -337,6 +355,8 @@ class DesktopPetApp:
         self.config: Optional[SpriteConfig] = None
         self.pet = PetWindow(root)
         self.pet.set_interaction_handler(self.play_interaction)
+        self.pet.set_position_handler(self.handle_pet_position_changed)
+        self.bubble = BubbleWindow(root, TRANSPARENT_COLOR)
         self.app_config = self.load_app_config()
 
         self.cell_width = tk.IntVar(value=192)
@@ -351,6 +371,18 @@ class DesktopPetApp:
         self.gen_model = tk.StringVar(value=self.app_config.get("model", "gpt-image-2"))
         self.startup_enabled = tk.BooleanVar(value=self.is_startup_enabled())
         self.close_to_tray = tk.BooleanVar(value=bool(self.app_config.get("close_to_tray", True)))
+        self.startup_greeting_enabled = tk.BooleanVar(value=bool(self.app_config.get("startup_greeting_enabled", True)))
+        self.reminders = self.load_reminders()
+        self.reminder_selected_id = ""
+        self.reminder_enabled_var = tk.BooleanVar(value=True)
+        self.reminder_mode_var = tk.StringVar(value="每隔")
+        self.reminder_minutes_var = tk.IntVar(value=60)
+        self.reminder_hour_var = tk.StringVar(value="09")
+        self.reminder_minute_var = tk.StringVar(value="00")
+        self.reminder_text_var = tk.StringVar(value="该喝水啦，也让眼睛休息一下。")
+        self.reminder_next_var = tk.StringVar(value="")
+        self.interval_fields: Optional[ttk.Frame] = None
+        self.time_fields: Optional[ttk.Frame] = None
         self.gen_quality = tk.StringVar(value="medium")
         self.gen_references = [Path(path) for path in self.app_config.get("reference_images", []) if str(path).strip()]
         self.gen_reference_label = tk.StringVar(value="")
@@ -359,6 +391,10 @@ class DesktopPetApp:
         self.gen_history_var = tk.StringVar(value="")
         self.gen_history_options: dict[str, Path] = {}
         self.gen_running = False
+        self.gen_stop_requested = False
+        self.gen_process: Optional[subprocess.Popen] = None
+        self.start_generation_button: Optional[ttk.Button] = None
+        self.stop_generation_button: Optional[ttk.Button] = None
         self.gen_log: Optional[scrolledtext.ScrolledText] = None
         self.gen_prompt_text: Optional[scrolledtext.ScrolledText] = None
         self.current_run_dir: Optional[Path] = None
@@ -371,6 +407,10 @@ class DesktopPetApp:
         self.binding_vars = {key: tk.StringVar(value=default) for key, _label, default in INTERACTION_SPECS}
         self.binding_combos: list[ttk.Combobox] = []
         self.playful_after_id: Optional[str] = None
+        self.reminder_tree: Optional[ttk.Treeview] = None
+        self.app_started_at = datetime.now()
+        self.reminder_scheduler = ReminderScheduler(self.root, self.fire_reminder, self.app_started_at)
+        self.greeted_this_session = False
         self.action_token = 0
         self.current_action_id = ""
         self.current_force_loop = False
@@ -384,6 +424,7 @@ class DesktopPetApp:
         self.refresh_generation_history()
         self.refresh_pet_library()
         self.restore_last_pet()
+        self.schedule_reminder()
 
     def ensure_app_dirs(self) -> None:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -450,10 +491,13 @@ class DesktopPetApp:
         if self.playful_after_id:
             self.root.after_cancel(self.playful_after_id)
             self.playful_after_id = None
+        self.reminder_scheduler.cancel()
         if self.tray_icon is not None:
             self.tray_icon.stop()
             self.tray_icon = None
         self.pet.stop()
+        self.bubble.hide()
+        self.bubble.destroy()
         self.pet.destroy()
         self.root.destroy()
 
@@ -482,9 +526,12 @@ class DesktopPetApp:
     def _build_player_tab(self, parent: ttk.Frame) -> None:
         toolbar = ttk.Frame(parent, padding=8)
         toolbar.pack(fill="x")
-        ttk.Button(toolbar, text="导入精灵图", command=self.import_spritesheet).pack(side="left")
-        ttk.Button(toolbar, text="加载 JSON", command=self.load_json_dialog).pack(side="left", padx=(6, 0))
-        ttk.Button(toolbar, text="保存 JSON", command=self.save_json_dialog).pack(side="left", padx=(6, 0))
+        import_button = ttk.Menubutton(toolbar, text="导入")
+        import_menu = tk.Menu(import_button, tearoff=False)
+        import_menu.add_command(label="精灵图", command=self.import_spritesheet)
+        import_menu.add_command(label="JSON", command=self.load_json_dialog)
+        import_button.configure(menu=import_menu)
+        import_button.pack(side="left")
         ttk.Button(toolbar, text="显示桌宠", command=self.play_selected).pack(side="left", padx=(16, 0))
         ttk.Button(toolbar, text="隐藏桌宠", command=self.hide_pet).pack(side="left", padx=(6, 0))
         ttk.Button(toolbar, text="刷新宠物库", command=self.refresh_pet_library).pack(side="left", padx=(6, 0))
@@ -527,16 +574,20 @@ class DesktopPetApp:
         pet_settings = ttk.LabelFrame(parent, text="宠物设置与交互绑定", padding=8)
         pet_settings.pack(fill="x", padx=8, pady=(0, 8))
         ttk.Label(pet_settings, text="昵称").grid(row=0, column=0, sticky="w", padx=(0, 4), pady=(0, 6))
-        ttk.Entry(pet_settings, textvariable=self.pet_nickname, width=18).grid(row=0, column=1, sticky="w", padx=(0, 12), pady=(0, 6))
-        ttk.Button(pet_settings, text="保存绑定", command=self.save_pet_settings).grid(row=0, column=2, sticky="w", pady=(0, 6))
+        nickname_entry = ttk.Entry(pet_settings, textvariable=self.pet_nickname, width=22)
+        nickname_entry.grid(row=0, column=1, sticky="w", padx=(0, 12), pady=(0, 6))
+        nickname_entry.bind("<Return>", lambda _event: self.save_pet_nickname())
+        nickname_entry.bind("<FocusOut>", lambda _event: self.save_pet_nickname(silent=True))
+        ttk.Button(pet_settings, text="保存昵称", command=self.save_pet_nickname).grid(row=1, column=1, sticky="w", pady=(0, 8))
 
         self.binding_combos = []
         for index, (key, label, _default) in enumerate(INTERACTION_SPECS):
-            row = 1 + index // 4
+            row = 2 + index // 4
             col = (index % 4) * 2
             ttk.Label(pet_settings, text=label).grid(row=row, column=col, sticky="w", padx=(0, 4), pady=(2, 2))
             combo = ttk.Combobox(pet_settings, textvariable=self.binding_vars[key], state="readonly", width=13)
             combo.grid(row=row, column=col + 1, sticky="w", padx=(0, 14), pady=(2, 2))
+            combo.bind("<<ComboboxSelected>>", lambda _event: self.save_interaction_bindings())
             self.binding_combos.append(combo)
 
         main = ttk.Frame(parent, padding=8)
@@ -619,8 +670,10 @@ class DesktopPetApp:
 
         buttons = ttk.Frame(left_panel)
         buttons.grid(row=1, column=0, columnspan=2, sticky="w", pady=(14, 6))
-        ttk.Button(buttons, text="开始生成", command=self.start_generation).pack(side="left")
-        ttk.Button(buttons, text="加载最近输出结果", command=self.load_generated_result).pack(side="left", padx=(8, 0))
+        self.start_generation_button = ttk.Button(buttons, text="开始生成", command=self.start_generation)
+        self.start_generation_button.pack(side="left")
+        self.stop_generation_button = ttk.Button(buttons, text="停止", command=self.stop_generation, state="disabled")
+        self.stop_generation_button.pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="刷新历史", command=self.refresh_generation_history).pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="清空日志", command=self.clear_generation_log).pack(side="left", padx=(8, 0))
 
@@ -665,8 +718,118 @@ class DesktopPetApp:
         ).grid(row=1, column=0, sticky="w", pady=4)
         ttk.Label(basic, text="关闭此选项后，点击窗口 X 会直接退出程序。", foreground="#666").grid(row=2, column=0, sticky="w", pady=(2, 0))
 
+        reminder = ttk.LabelFrame(panel, text="提醒与问候", padding=10)
+        reminder.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        reminder.columnconfigure(0, weight=1)
+        reminder.columnconfigure(1, weight=0)
+
+        greeting_row = ttk.Frame(reminder)
+        greeting_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        greeting_row.columnconfigure(1, weight=1)
+        ttk.Checkbutton(
+            greeting_row,
+            text="启动时打招呼",
+            variable=self.startup_greeting_enabled,
+            command=self.save_app_config,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            greeting_row,
+            text="按早上、上午、中午、下午、晚上随机问候。",
+            foreground="#666",
+        ).grid(row=0, column=1, sticky="w", padx=(16, 0))
+
+        list_panel = ttk.LabelFrame(reminder, text="提醒列表", padding=6)
+        list_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
+        list_panel.columnconfigure(0, weight=1)
+        columns = ("enabled", "mode", "schedule", "next", "text")
+        self.reminder_tree = ttk.Treeview(list_panel, columns=columns, show="headings", height=5)
+        headings = {"enabled": "启用", "mode": "类型", "schedule": "规则", "next": "下次提醒", "text": "内容"}
+        widths = {"enabled": 48, "mode": 64, "schedule": 88, "next": 210, "text": 260}
+        for col in columns:
+            self.reminder_tree.heading(col, text=headings[col])
+            self.reminder_tree.column(col, width=widths[col], anchor="center" if col != "text" else "w")
+        self.reminder_tree.grid(row=0, column=0, sticky="nsew")
+        reminder_scroll = ttk.Scrollbar(list_panel, orient="vertical", command=self.reminder_tree.yview)
+        reminder_scroll.grid(row=0, column=1, sticky="ns")
+        self.reminder_tree.configure(yscrollcommand=reminder_scroll.set)
+        self.reminder_tree.bind("<<TreeviewSelect>>", lambda _event: self.load_selected_reminder())
+
+        editor = ttk.LabelFrame(reminder, text="编辑提醒", padding=8)
+        editor.grid(row=1, column=1, sticky="nsew")
+        editor.columnconfigure(1, weight=1)
+        ttk.Checkbutton(editor, text="启用这条提醒", variable=self.reminder_enabled_var).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Label(editor, text="类型").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
+        mode_combo = ttk.Combobox(
+            editor,
+            textvariable=self.reminder_mode_var,
+            state="readonly",
+            values=("每隔", "定时"),
+            width=12,
+        )
+        mode_combo.grid(row=1, column=1, sticky="ew", pady=4)
+        mode_combo.bind("<<ComboboxSelected>>", lambda _event: self.update_reminder_mode_fields())
+
+        ttk.Label(editor, text="规则").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
+        rule_area = ttk.Frame(editor)
+        rule_area.grid(row=2, column=1, sticky="ew", pady=4)
+        self.interval_fields = ttk.Frame(rule_area)
+        self.interval_fields.grid(row=0, column=0, sticky="w")
+        ttk.Label(self.interval_fields, text="每").pack(side="left")
+        minutes_spinbox = ttk.Spinbox(
+            self.interval_fields,
+            textvariable=self.reminder_minutes_var,
+            from_=1,
+            to=720,
+            increment=5,
+            width=7,
+            command=self.update_reminder_next_preview,
+        )
+        minutes_spinbox.pack(side="left", padx=4)
+        minutes_spinbox.bind("<KeyRelease>", lambda _event: self.update_reminder_next_preview())
+        minutes_spinbox.bind("<FocusOut>", lambda _event: self.update_reminder_next_preview())
+        ttk.Label(self.interval_fields, text="分钟").pack(side="left")
+
+        self.time_fields = ttk.Frame(rule_area)
+        self.time_fields.grid(row=0, column=0, sticky="w")
+        hour_combo = ttk.Combobox(
+            self.time_fields,
+            textvariable=self.reminder_hour_var,
+            state="readonly",
+            values=[f"{value:02d}" for value in range(24)],
+            width=4,
+        )
+        hour_combo.pack(side="left")
+        hour_combo.bind("<<ComboboxSelected>>", lambda _event: self.update_reminder_next_preview())
+        ttk.Label(self.time_fields, text="时").pack(side="left", padx=(4, 8))
+        minute_combo = ttk.Combobox(
+            self.time_fields,
+            textvariable=self.reminder_minute_var,
+            state="readonly",
+            values=[f"{value:02d}" for value in range(60)],
+            width=4,
+        )
+        minute_combo.pack(side="left")
+        minute_combo.bind("<<ComboboxSelected>>", lambda _event: self.update_reminder_next_preview())
+        ttk.Label(self.time_fields, text="分").pack(side="left", padx=(4, 0))
+
+        ttk.Label(editor, text="内容").grid(row=3, column=0, sticky="nw", pady=4, padx=(0, 8))
+        ttk.Entry(editor, textvariable=self.reminder_text_var, width=30).grid(row=3, column=1, sticky="ew", pady=4)
+        ttk.Label(editor, text="未来两次").grid(row=4, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Label(editor, textvariable=self.reminder_next_var, foreground="#555").grid(row=4, column=1, sticky="w", pady=4)
+
+        reminder_buttons = ttk.Frame(editor)
+        reminder_buttons.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        for index in range(4):
+            reminder_buttons.columnconfigure(index, weight=1)
+        ttk.Button(reminder_buttons, text="添加", command=self.add_reminder).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(reminder_buttons, text="保存", command=self.save_selected_reminder).grid(row=0, column=1, sticky="ew", padx=(0, 6))
+        ttk.Button(reminder_buttons, text="删除", command=self.delete_selected_reminder).grid(row=0, column=2, sticky="ew", padx=(0, 6))
+        ttk.Button(reminder_buttons, text="测试", command=self.test_reminder_bubble).grid(row=0, column=3, sticky="ew")
+        self.update_reminder_mode_fields()
+        self.refresh_reminder_list()
+
         generation = ttk.LabelFrame(panel, text="生成设置", padding=10)
-        generation.grid(row=1, column=0, sticky="ew")
+        generation.grid(row=2, column=0, sticky="ew")
         generation.columnconfigure(1, weight=1)
         fields = [
             ("API Key", self.gen_api_key, True),
@@ -694,7 +857,9 @@ class DesktopPetApp:
             return
         self.save_app_config()
         self.gen_running = True
+        self.gen_stop_requested = False
         self.current_run_dir = run_dir
+        self.update_generation_controls()
         self.status.set("正在继续历史任务..." if run_dir is not None else "正在生成动画，请稍等...")
         self.clear_generation_log()
         if run_dir is None:
@@ -703,6 +868,252 @@ class DesktopPetApp:
             self.append_generation_log(f"继续历史任务：{run_dir}\n")
         thread = threading.Thread(target=self._generation_worker, kwargs={"resume_run_dir": run_dir}, daemon=True)
         thread.start()
+
+    def update_generation_controls(self) -> None:
+        if self.start_generation_button is not None:
+            self.start_generation_button.configure(state="disabled" if self.gen_running else "normal")
+        if self.stop_generation_button is not None:
+            self.stop_generation_button.configure(state="normal" if self.gen_running else "disabled")
+
+    def test_reminder_bubble(self) -> None:
+        self.save_selected_reminder(silent=True)
+        self.show_pet_bubble(self.reminder_text_var.get())
+
+    def load_reminders(self) -> list[dict[str, object]]:
+        raw_items = self.app_config.get("reminders")
+        if isinstance(raw_items, list):
+            reminders = [self.normalize_reminder(item) for item in raw_items if isinstance(item, dict)]
+            if reminders:
+                return merge_builtin_reminders(reminders)
+        return merge_builtin_reminders([self.normalize_reminder({
+            "id": self.make_reminder_id(),
+            "enabled": False,
+            "mode": "interval",
+            "minutes": 60,
+            "time": "09:00",
+            "text": "该喝水啦，也让眼睛休息一下。",
+        })])
+
+    def normalize_reminder(self, item: dict[str, object]) -> dict[str, object]:
+        mode = str(item.get("mode", "interval"))
+        if mode not in {"interval", "time"}:
+            mode = "interval"
+        return {
+            "id": str(item.get("id") or self.make_reminder_id()),
+            "enabled": bool(item.get("enabled", True)),
+            "builtin": bool(item.get("builtin", False)),
+            "mode": mode,
+            "minutes": self.safe_minutes(item.get("minutes")),
+            "time": self.safe_time(str(item.get("time", "09:00"))),
+            "text": str(item.get("text") or "该喝水啦，也让眼睛休息一下。"),
+        }
+
+    def make_reminder_id(self) -> str:
+        return f"rem-{secrets.token_hex(4)}"
+
+    def safe_minutes(self, value: object) -> int:
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError, tk.TclError):
+            return 60
+
+    def safe_time(self, value: str) -> str:
+        try:
+            hour_text, minute_text = value.strip().split(":", 1)
+            hour = max(0, min(23, int(hour_text)))
+            minute = max(0, min(59, int(minute_text)))
+            return f"{hour:02d}:{minute:02d}"
+        except (TypeError, ValueError):
+            return "09:00"
+
+    def safe_time_parts(self, value: str) -> tuple[str, str]:
+        safe = self.safe_time(value)
+        hour, minute = safe.split(":", 1)
+        return hour, minute
+
+    def refresh_reminder_list(self) -> None:
+        if self.reminder_tree is None:
+            return
+        self.reminder_tree.delete(*self.reminder_tree.get_children())
+        for item in self.reminders:
+            item_id = str(item["id"])
+            self.reminder_tree.insert("", "end", iid=item_id, values=(
+                "是" if item.get("enabled") else "否",
+                "每隔" if item.get("mode") == "interval" else "定时",
+                self.reminder_schedule_text(item),
+                self.reminder_next_text(item),
+                f"内置 · {item.get('text', '')}" if is_builtin_reminder(item) else item.get("text", ""),
+            ))
+        if self.reminders and not self.reminder_selected_id:
+            first_id = str(self.reminders[0]["id"])
+            self.reminder_tree.selection_set(first_id)
+            self.load_reminder_into_editor(self.reminders[0])
+
+    def reminder_schedule_text(self, item: dict[str, object]) -> str:
+        if item.get("mode") == "time":
+            return str(item.get("time", "09:00"))
+        return f"{item.get('minutes', 60)} 分钟"
+
+    def reminder_next_text(self, item: dict[str, object]) -> str:
+        if not item.get("enabled"):
+            return "未启用"
+        times = next_reminder_times(item, count=2, start_time=self.app_started_at)
+        return " / ".join(self.format_reminder_time(value) for value in times)
+
+    def format_reminder_time(self, value: datetime) -> str:
+        today = datetime.now().date()
+        prefix = "今天" if value.date() == today else "明天" if value.date() == today + timedelta(days=1) else value.strftime("%m-%d")
+        return f"{prefix} {value.strftime('%H:%M')}"
+
+    def selected_reminder(self) -> Optional[dict[str, object]]:
+        if self.reminder_tree is not None:
+            selected = self.reminder_tree.selection()
+            if selected:
+                self.reminder_selected_id = selected[0]
+        return next((item for item in self.reminders if str(item.get("id")) == self.reminder_selected_id), None)
+
+    def load_selected_reminder(self) -> None:
+        item = self.selected_reminder()
+        if item:
+            self.load_reminder_into_editor(item)
+
+    def load_reminder_into_editor(self, item: dict[str, object]) -> None:
+        self.reminder_selected_id = str(item.get("id", ""))
+        self.reminder_enabled_var.set(bool(item.get("enabled", True)))
+        self.reminder_mode_var.set(self.reminder_mode_label(str(item.get("mode", "interval"))))
+        self.reminder_minutes_var.set(self.safe_minutes(item.get("minutes")))
+        hour, minute = self.safe_time_parts(str(item.get("time", "09:00")))
+        self.reminder_hour_var.set(hour)
+        self.reminder_minute_var.set(minute)
+        self.reminder_text_var.set(str(item.get("text", "")))
+        self.update_reminder_mode_fields()
+
+    def editor_reminder_data(self, item_id: str) -> dict[str, object]:
+        current = next((item for item in self.reminders if str(item.get("id")) == item_id), {})
+        return self.normalize_reminder({
+            "id": item_id,
+            "enabled": self.reminder_enabled_var.get(),
+            "builtin": bool(current.get("builtin", False)),
+            "mode": self.reminder_mode_value(self.reminder_mode_var.get()),
+            "minutes": self.reminder_minutes_var.get(),
+            "time": f"{self.reminder_hour_var.get()}:{self.reminder_minute_var.get()}",
+            "text": self.reminder_text_var.get(),
+        })
+
+    def update_reminder_mode_fields(self) -> None:
+        if self.interval_fields is None or self.time_fields is None:
+            return
+        if self.reminder_mode_value(self.reminder_mode_var.get()) == "time":
+            self.interval_fields.grid_remove()
+            self.time_fields.grid()
+        else:
+            self.time_fields.grid_remove()
+            self.interval_fields.grid()
+        self.update_reminder_next_preview()
+
+    def update_reminder_next_preview(self) -> None:
+        item = self.editor_reminder_data(self.reminder_selected_id or "_preview")
+        self.reminder_next_var.set(self.reminder_next_text(item))
+
+    def reminder_mode_label(self, mode: str) -> str:
+        return "定时" if mode == "time" else "每隔"
+
+    def reminder_mode_value(self, label: str) -> str:
+        return "time" if label == "定时" else "interval"
+
+    def add_reminder(self) -> None:
+        item = self.normalize_reminder({
+            "id": self.make_reminder_id(),
+            "enabled": True,
+            "mode": "interval",
+            "minutes": 60,
+            "time": "09:00",
+            "text": "该喝水啦，也让眼睛休息一下。",
+        })
+        self.reminders.append(item)
+        self.reminder_selected_id = str(item["id"])
+        self.load_reminder_into_editor(item)
+        self.refresh_reminder_list()
+        if self.reminder_tree is not None:
+            self.reminder_tree.selection_set(self.reminder_selected_id)
+        self.save_reminders()
+
+    def save_selected_reminder(self, silent: bool = False) -> None:
+        item = self.selected_reminder()
+        if item is None:
+            if self.reminders:
+                item = self.reminders[0]
+            else:
+                self.add_reminder()
+                return
+        item_id = str(item["id"])
+        updated = self.editor_reminder_data(item_id)
+        if is_builtin_reminder(item):
+            updated = dict(item)
+            updated["enabled"] = self.reminder_enabled_var.get()
+        for index, current in enumerate(self.reminders):
+            if str(current.get("id")) == item_id:
+                self.reminders[index] = updated
+                break
+        self.reminder_selected_id = item_id
+        self.refresh_reminder_list()
+        if self.reminder_tree is not None:
+            self.reminder_tree.selection_set(item_id)
+        self.save_reminders()
+        if not silent:
+            self.status.set("已保存提醒。")
+
+    def delete_selected_reminder(self) -> None:
+        item = self.selected_reminder()
+        if item is None:
+            return
+        if is_builtin_reminder(item):
+            self.status.set("内置提醒不能删除，可以关闭启用。")
+            return
+        item_id = str(item["id"])
+        self.reminders = [current for current in self.reminders if str(current.get("id")) != item_id]
+        self.reminder_selected_id = str(self.reminders[0]["id"]) if self.reminders else ""
+        if self.reminders:
+            self.load_reminder_into_editor(self.reminders[0])
+        else:
+            self.reminder_enabled_var.set(True)
+            self.reminder_mode_var.set("每隔")
+            self.reminder_minutes_var.set(60)
+            self.reminder_hour_var.set("09")
+            self.reminder_minute_var.set("00")
+            self.reminder_text_var.set("该喝水啦，也让眼睛休息一下。")
+            self.update_reminder_mode_fields()
+        self.refresh_reminder_list()
+        self.save_reminders()
+
+    def save_reminders(self) -> None:
+        self.save_app_config()
+        self.schedule_reminder()
+
+    def stop_generation(self) -> None:
+        if not self.gen_running:
+            return
+        self.gen_stop_requested = True
+        self.status.set("正在停止生成...")
+        self.append_generation_log("\n正在停止生成...\n")
+        process = self.gen_process
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+                self.root.after(3000, self.kill_generation_if_needed)
+            except Exception as exc:
+                self.append_generation_log(f"停止失败：{exc}\n")
+
+    def kill_generation_if_needed(self) -> None:
+        if not self.gen_stop_requested:
+            return
+        process = self.gen_process
+        if process is not None and process.poll() is None:
+            try:
+                process.kill()
+                self.append_generation_log("生成进程未及时退出，已强制停止。\n")
+            except Exception as exc:
+                self.append_generation_log(f"强制停止失败：{exc}\n")
 
     def _generation_worker(self, resume_run_dir: Optional[Path] = None) -> None:
         try:
@@ -742,27 +1153,36 @@ class DesktopPetApp:
                 self.root.after(0, lambda: self.append_generation_log("参考图片：\n" + "\n".join(str(path) for path in references) + "\n"))
             if getattr(sys, "frozen", False):
                 cmd = [sys.executable, "--run-generator", *runner_args]
-                self.root.after(0, lambda: self.append_generation_log("命令：\n" + self._redacted_command(cmd) + "\n\n"))
-                self._last_generator_lines = []
-                return_code = self._run_generator_in_process(runner, runner_args)
-                lines = getattr(self, "_last_generator_lines", [])
             else:
                 cmd = [sys.executable, str(runner), *runner_args]
-                self.root.after(0, lambda: self.append_generation_log("命令：\n" + self._redacted_command(cmd) + "\n\n"))
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=APP_DIR,
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    bufsize=1,
-                )
-                assert process.stdout is not None
-                lines = []
-                for line in process.stdout:
-                    lines.append(line)
-                    self.root.after(0, lambda text=line: self.append_generation_log(text))
-                return_code = process.wait()
+            self.root.after(0, lambda: self.append_generation_log("命令：\n" + self._redacted_command(cmd) + "\n\n"))
+            creationflags = 0
+            startupinfo = None
+            if sys.platform == "win32":
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            process = subprocess.Popen(
+                cmd,
+                cwd=APP_DIR,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=1,
+                creationflags=creationflags,
+                startupinfo=startupinfo,
+            )
+            self.gen_process = process
+            assert process.stdout is not None
+            lines = []
+            for line in process.stdout:
+                lines.append(line)
+                self.root.after(0, lambda text=line: self.append_generation_log(text))
+            return_code = process.wait()
+            self.gen_process = None
+            if self.gen_stop_requested:
+                self.root.after(0, self._generation_stopped)
+                return
             if return_code != 0:
                 message = "".join(lines[-80:])
                 self.root.after(0, lambda: self._generation_failed(message))
@@ -770,6 +1190,7 @@ class DesktopPetApp:
             self.root.after(0, lambda: self.append_generation_log("\n生成流程完成，正在加载结果...\n"))
             self.root.after(0, lambda: self.load_generated_result(run_dir))
         except Exception as exc:
+            self.gen_process = None
             self.root.after(0, lambda: self._generation_failed(str(exc)))
 
     def get_generation_prompt(self) -> str:
@@ -1001,13 +1422,26 @@ class DesktopPetApp:
 
     def _generation_failed(self, message: str) -> None:
         self.gen_running = False
+        self.gen_process = None
+        self.update_generation_controls()
         self.status.set("生成失败。")
         self.append_generation_log("\n生成失败。\n")
         self.refresh_generation_history()
         messagebox.showerror("生成失败", message[-3000:] if message else "未知错误")
 
+    def _generation_stopped(self) -> None:
+        self.gen_running = False
+        self.gen_process = None
+        self.update_generation_controls()
+        self.status.set("生成已停止。")
+        self.append_generation_log("\n生成已停止。\n")
+        self.refresh_generation_history()
+
     def load_generated_result(self, run_dir: Optional[Path] = None) -> None:
         self.gen_running = False
+        self.gen_process = None
+        self.gen_stop_requested = False
+        self.update_generation_controls()
         run_dir = (run_dir or self.current_run_dir or self.latest_output_run())
         if run_dir is None:
             messagebox.showinfo("没有生成结果", f"找不到生成目录：{OUTPUT_DIR}")
@@ -1280,7 +1714,7 @@ class DesktopPetApp:
         self.status.set(f"已应用宠物：{folder.name}")
 
     def load_json_dialog(self) -> None:
-        path = filedialog.askopenfilename(title="加载精灵图 JSON", filetypes=[("JSON", "*.json")])
+        path = filedialog.askopenfilename(title="导入精灵图 JSON", filetypes=[("JSON", "*.json")])
         if path:
             self.load_json(Path(path))
 
@@ -1339,7 +1773,7 @@ class DesktopPetApp:
         self.set_binding_vars(self.config.interaction_bindings)
         self._refresh_tree()
         self.refresh_binding_options()
-        self.status.set(f"已加载 JSON：{path}")
+        self.status.set(f"已导入 JSON：{path}")
         self.save_current_pet_state(enabled=False)
 
     def clamped_display_scale(self, value: object | None = None) -> float:
@@ -1412,29 +1846,25 @@ class DesktopPetApp:
         for combo in self.binding_combos:
             combo.configure(values=action_ids)
 
-    def save_pet_settings(self) -> None:
+    def save_pet_nickname(self, silent: bool = False) -> None:
         if self.config is None or self.json_path is None:
-            messagebox.showinfo("没有宠物", "请先加载或选择一个宠物。")
+            if not silent:
+                messagebox.showinfo("没有宠物", "请先加载或选择一个宠物。")
             return
         self.config.nickname = self.pet_nickname.get().strip()
-        self.config.interaction_bindings = self.current_bindings()
         self.save_json(self.json_path)
         self.refresh_pet_library()
         if self.image_path:
             self.select_pet_folder(self.image_path.parent)
+        if not silent:
+            self.status.set("已保存昵称。")
 
-    def save_json_dialog(self) -> None:
-        if self.config is None:
-            self.rebuild_actions_from_grid()
-        default = self.image_path.with_suffix(".json").name if self.image_path else "spritesheet.json"
-        path = filedialog.asksaveasfilename(
-            title="保存精灵图 JSON",
-            initialfile=default,
-            defaultextension=".json",
-            filetypes=[("JSON", "*.json")],
-        )
-        if path:
-            self.save_json(Path(path))
+    def save_interaction_bindings(self) -> None:
+        if self.config is None or self.json_path is None:
+            return
+        self.config.interaction_bindings = self.current_bindings()
+        self.save_json(self.json_path)
+        self.status.set("已保存交互绑定。")
 
     def save_json(self, path: Path) -> None:
         if self.config is None:
@@ -1596,6 +2026,7 @@ class DesktopPetApp:
         frames = self.slice_action(action)
         self.pet.show_action(frames, action.fps, action.loop or force_loop, self.clamp_display_scale())
         self.root.after(0, self.apply_saved_or_default_pet_position)
+        self.root.after(700, self.maybe_show_startup_greeting)
         self.status.set(f"正在播放：{action.name}")
         self.save_current_pet_state(enabled=True)
         self.schedule_playful_action()
@@ -1657,6 +2088,7 @@ class DesktopPetApp:
         x, y = self.clamp_pet_position(x, y)
         self.pet.geometry(f"+{x}+{y}")
         self.pet_position_applied = True
+        self.handle_pet_position_changed()
 
     def default_pet_position(self) -> tuple[int, int]:
         self.pet.update_idletasks()
@@ -1693,10 +2125,37 @@ class DesktopPetApp:
 
     def hide_pet(self) -> None:
         self.pet.withdraw()
+        self.bubble.hide()
         if self.playful_after_id:
             self.root.after_cancel(self.playful_after_id)
             self.playful_after_id = None
         self.save_current_pet_state(enabled=False)
+
+    def handle_pet_position_changed(self) -> None:
+        self.bubble.follow_anchor()
+
+    def show_pet_bubble(self, text: str, duration_ms: int = 4500) -> None:
+        if not self.pet.winfo_ismapped():
+            if self.sheet is not None and self.config is not None:
+                self.play_selected()
+                self.root.after(800, lambda value=text, delay=duration_ms: self.show_pet_bubble(value, delay))
+            return
+        self.bubble.show_near(self.pet, text, duration_ms)
+
+    def maybe_show_startup_greeting(self) -> None:
+        if self.greeted_this_session or not self.startup_greeting_enabled.get():
+            return
+        if not self.pet.winfo_ismapped():
+            return
+        self.greeted_this_session = True
+        self.show_pet_bubble(startup_greeting_message(), 5000)
+
+    def schedule_reminder(self) -> None:
+        self.reminder_scheduler.schedule(self.reminders)
+
+    def fire_reminder(self, item: dict[str, object]) -> None:
+        self.show_pet_bubble(str(item.get("text", "")), 6000)
+        self.refresh_reminder_list()
 
     def slice_action(self, action: ActionConfig) -> list[Image.Image]:
         assert self.sheet is not None and self.config is not None
@@ -1729,6 +2188,8 @@ class DesktopPetApp:
             "base_url": self.gen_base_url.get(),
             "model": self.gen_model.get(),
             "close_to_tray": self.close_to_tray.get(),
+            "startup_greeting_enabled": self.startup_greeting_enabled.get(),
+            "reminders": self.reminders,
             "reference_images": [str(path) for path in self.gen_references],
         })
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -1811,6 +2272,7 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "--run-generator":
         return run_embedded_generator()
     root = tk.Tk()
+    root.withdraw()
     DesktopPetApp(root)
     root.mainloop()
     return 0
